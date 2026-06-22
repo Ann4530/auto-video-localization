@@ -1,0 +1,13 @@
+# Core pipeline
+yt-dlp>=2024.0.0          # Download video from TikTok / Douyin
+faster-whisper>=1.0.0    # Speech-to-text (timestamps), faster than openai-whisper
+anthropic>=0.40.0        # Translation via Claude API
+edge-tts>=6.1.0          # Vietnamese text-to-speech (free, natural voice)
+ffmpeg-python>=0.2.0     # Audio mux / burn subtitles (needs ffmpeg in PATH)
+
+# Config & utils
+python-dotenv>=1.0.0
+pyyaml>=6.0
+requests>=2.31.0
+
+# Uploading: Facebook / Instagram use Graph API via requests; TikTok uses its own API

@@ -1,0 +1,70 @@
+# ============================================================
+#  Cấu hình pipeline. Sửa file này để đổi hành vi mà không
+#  cần sửa code.
+# ============================================================
+
+# Các kênh / nguồn cần theo dõi. Mỗi mục là 1 URL kênh hoặc
+# 1 URL video. Khi chạy ở chế độ --watch, các kênh sẽ được
+# quét định kỳ để lấy video mới.
+sources:
+  # - https://www.tiktok.com/@tenkenh
+  # - https://www.douyin.com/user/MS4wLjxxxx
+  - https://www.tiktok.com/@example/video/0000000000000000000
+
+download:
+  # Số video mới nhất lấy về mỗi lần quét 1 kênh
+  max_per_channel: 5
+  # Định dạng yt-dlp ưu tiên (mp4 chất lượng tốt nhất, fallback best)
+  format: "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b"
+  # Douyin/TikTok thường cần cookies. Chọn 1 trong 2 cách:
+  #  - cookies_from_browser: tên trình duyệt ("edge"/"chrome"/"firefox")
+  #    -> yt-dlp tự lấy cookie (PHẢI ĐÓNG hẳn trình duyệt đó trước khi chạy)
+  #  - hoặc đặt COOKIES_FILE trong .env trỏ tới file cookies.txt đã export
+  # Để null nếu không cần.
+  cookies_from_browser: null
+
+transcribe:
+  # Model whisper: tiny / base / small / medium / large-v3
+  # large-v3 chính xác nhất, base/small đủ dùng và nhanh
+  model: "small"
+  # Để trống = tự nhận diện ngôn ngữ nguồn. Đặt "zh" nếu chắc chắn là tiếng Trung
+  language: null
+  device: "auto"          # auto / cpu / cuda
+  compute_type: "int8"    # int8 (CPU) / float16 (GPU)
+
+translate:
+  target_language: "Tiếng Việt"
+  # Chọn nhà cung cấp: "claude" hoặc "gemini"
+  provider: "gemini"
+  # gemini-2.0-flash đang bị giới hạn quota=0 cho key này -> dùng 2.5-flash.
+  # Gợi ý: gemini-2.5-flash (rẻ, nhanh) / gemini-2.5-pro (chất lượng cao)
+  model: "gemini-2.5-flash"
+  # Phong cách dịch: tự nhiên, đời thường, hợp khẩu hình ngắn gọn
+  style: "tự nhiên, đời thường, ngắn gọn dễ nghe, phù hợp lồng tiếng video ngắn"
+
+tts:
+  # Giọng đọc tiếng Việt của edge-tts.
+  # vi-VN-HoaiMyNeural (nữ) | vi-VN-NamMinhNeural (nam)
+  voice: "vi-VN-HoaiMyNeural"
+  rate: "+0%"     # tốc độ đọc, ví dụ "+10%" cho nhanh hơn
+  # Giữ lại 1 phần nhạc nền gốc (0.0 = bỏ hẳn audio gốc, 0.15 = giữ nhẹ nền)
+  keep_original_volume: 0.12
+
+compose:
+  # Burn (gắn cứng) phụ đề vào video?
+  burn_subtitles: true
+  subtitle_font: "Arial"
+  subtitle_fontsize: 18
+  subtitle_color: "&H00FFFFFF"    # trắng (định dạng ASS)
+  subtitle_outline_color: "&H00000000"  # viền đen
+
+upload:
+  # Bật/tắt từng nền tảng. Để false sẽ chỉ xuất file ra data/output.
+  tiktok: false
+  facebook: false
+  instagram: false
+  # Caption mặc định (có thể dùng {title} làm placeholder)
+  caption_template: "{title}\n\n#viral #xuhuong #vietsub"
+
+# Quét định kỳ (giây) khi chạy chế độ --watch
+watch_interval_seconds: 1800
