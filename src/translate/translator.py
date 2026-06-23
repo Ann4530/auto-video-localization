@@ -151,9 +151,11 @@ class GeminiTranslator(BaseTranslator):
 
     def __init__(self, api_key: str, model: str = "gemini-2.5-flash", **kw):
         super().__init__(**kw)
-        if not api_key:
+        # Cho phép NHIỀU key (phân tách bằng dấu phẩy) -> tự xoay khi 1 key 429.
+        self.keys = [k.strip() for k in (api_key or "").split(",") if k.strip()]
+        if not self.keys:
             raise ValueError("Thiếu GEMINI_API_KEY trong .env")
-        self.api_key = api_key
+        self.idx = 0
         self.model = model
 
     def _raw_call(self, system: str, user: str) -> str:
@@ -167,19 +169,32 @@ class GeminiTranslator(BaseTranslator):
                 "responseMimeType": "application/json",
             },
         }
-        resp = requests.post(
-            url,
-            params={"key": self.api_key},
-            json=body,
-            timeout=120,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        try:
-            return data["candidates"][0]["content"]["parts"][0]["text"]
-        except (KeyError, IndexError):
-            log.warning("Phản hồi Gemini bất thường: %s", data)
-            return "[]"
+        # Thử lần lượt từng key trong 1 vòng: gặp 429 (hết quota) thì xoay key kế.
+        # Nếu CẢ vòng đều 429 -> raise HTTPError để lớp _call backoff rồi thử lại
+        # (chờ quota theo-phút hồi lại). Lỗi khác (503...) raise ngay để _call xử lý.
+        last_429: requests.HTTPError | None = None
+        for _ in range(len(self.keys)):
+            key = self.keys[self.idx]
+            resp = requests.post(url, params={"key": key}, json=body, timeout=120)
+            if resp.status_code == 429:
+                log.warning(
+                    "Key Gemini #%d hết quota (429), xoay sang key kế", self.idx + 1
+                )
+                try:
+                    resp.raise_for_status()
+                except requests.HTTPError as e:
+                    last_429 = e
+                self.idx = (self.idx + 1) % len(self.keys)
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            try:
+                return data["candidates"][0]["content"]["parts"][0]["text"]
+            except (KeyError, IndexError):
+                log.warning("Phản hồi Gemini bất thường: %s", data)
+                return "[]"
+        # Tất cả key đều 429 -> để lớp trên backoff & retry
+        raise last_429 if last_429 is not None else RuntimeError("Gemini 429 mọi key")
 
 
 def make_translator(
