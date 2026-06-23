@@ -2,8 +2,14 @@
 
 Ví dụ:
   python -m src.main url "https://www.tiktok.com/@x/video/123"
+  python -m src.main file "video.mp4" --mode screen_only
   python -m src.main run            # xử lý các nguồn trong config.yaml 1 lần
   python -m src.main watch          # quét định kỳ theo watch_interval_seconds
+
+Các chế độ (--mode):
+  voice_transcript : dịch giọng nói + lồng tiếng + HIỆN phụ đề (mặc định)
+  voice_only       : dịch giọng nói + lồng tiếng, KHÔNG phụ đề
+  screen_only      : CHỈ dịch chữ trên màn hình (giữ audio gốc)
 """
 from __future__ import annotations
 
@@ -16,6 +22,8 @@ from .utils.logging import get_logger
 
 log = get_logger("main")
 
+MODES = ["voice_transcript", "voice_only", "screen_only"]
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Tự động Việt hoá & đăng video")
@@ -24,6 +32,12 @@ def main() -> None:
 
     p_url = sub.add_parser("url", help="Xử lý 1 URL video cụ thể")
     p_url.add_argument("url")
+    p_url.add_argument("--mode", choices=MODES, default=None, help="Chế độ xử lý")
+
+    p_file = sub.add_parser("file", help="Xử lý 1 file video CÓ SẴN trên máy")
+    p_file.add_argument("path")
+    p_file.add_argument("--title", default=None, help="Tiêu đề/caption (tuỳ chọn)")
+    p_file.add_argument("--mode", choices=MODES, default=None, help="Chế độ xử lý")
 
     sub.add_parser("run", help="Xử lý tất cả nguồn trong config 1 lần")
     sub.add_parser("watch", help="Quét nguồn định kỳ")
@@ -33,7 +47,10 @@ def main() -> None:
     pipeline = Pipeline(cfg)
 
     if args.command == "url":
-        out = pipeline.process_url(args.url)
+        out = pipeline.process_url(args.url, mode=args.mode)
+        log.info("Kết quả: %s", out)
+    elif args.command == "file":
+        out = pipeline.process_file(args.path, title=args.title, mode=args.mode)
         log.info("Kết quả: %s", out)
     elif args.command == "run":
         outs = pipeline.process_sources()

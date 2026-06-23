@@ -8,6 +8,7 @@ Chọn nhà cung cấp qua config: translate.provider = "claude" | "gemini".
 from __future__ import annotations
 
 import json
+import time
 
 import requests
 
@@ -41,17 +42,43 @@ class BaseTranslator:
         self.batch_size = batch_size
 
     # Lớp con cài hàm này: nhận system + user prompt, trả về text thô.
-    def _call(self, system: str, user: str) -> str:  # pragma: no cover
+    def _raw_call(self, system: str, user: str) -> str:  # pragma: no cover
         raise NotImplementedError
 
+    def _call(self, system: str, user: str, retries: int = 5) -> str:
+        """Gọi API có retry + backoff cho lỗi tạm thời (429/5xx)."""
+        delay = 2.0
+        for attempt in range(retries):
+            try:
+                return self._raw_call(system, user)
+            except requests.HTTPError as e:
+                code = e.response.status_code if e.response is not None else 0
+                if code in (429, 500, 502, 503, 504) and attempt < retries - 1:
+                    log.warning("API %s, thử lại sau %.0fs (lần %d)", code, delay, attempt + 1)
+                    time.sleep(delay)
+                    delay = min(delay * 2, 30)
+                    continue
+                raise
+            except Exception as e:  # noqa: BLE001 - lỗi mạng tạm thời
+                if attempt < retries - 1:
+                    log.warning("Lỗi gọi API (%s), thử lại sau %.0fs", e, delay)
+                    time.sleep(delay)
+                    delay = min(delay * 2, 30)
+                    continue
+                raise
+        raise RuntimeError("Hết lượt retry API dịch")
+
     def _translate_batch(self, texts: list[str]) -> list[str]:
+        """Dịch 1 lô. Trả về JSON OBJECT keyed theo index để KHÔNG bị lệch
+        dòng nếu model lỡ bỏ/gộp 1 câu (mỗi bản dịch gắn đúng id của nó)."""
         system = _SYSTEM.format(target=self.target, style=self.style)
         payload = json.dumps(
-            [{"i": i, "text": t} for i, t in enumerate(texts)], ensure_ascii=False
+            {str(i): t for i, t in enumerate(texts)}, ensure_ascii=False
         )
         user = (
-            f"Dịch các câu sau. Trả về JSON array gồm {len(texts)} chuỗi đã dịch, "
-            f"đúng thứ tự.\n\n{payload}"
+            "Dịch các câu trong JSON object sau (key là id, value là câu gốc). "
+            "Trả về JSON object CÙNG các key đó, value là bản dịch tiếng Việt. "
+            f"Phải có đủ {len(texts)} key.\n\n{payload}"
         )
         raw = _strip_code_fence(self._call(system, user).strip())
         try:
@@ -59,24 +86,38 @@ class BaseTranslator:
         except json.JSONDecodeError:
             log.warning("Không parse được JSON, giữ nguyên lô này")
             return texts
-        result = [
-            (item["text"] if isinstance(item, dict) else str(item)) for item in out
-        ]
-        if len(result) != len(texts):
-            log.warning(
-                "Số dòng dịch (%d) khác đầu vào (%d), căn chỉnh lại",
-                len(result), len(texts),
-            )
-            result = _align(result, len(texts))
+        # Map theo id; câu nào thiếu thì giữ nguyên bản gốc
+        result: list[str] = []
+        missing = 0
+        for i, original in enumerate(texts):
+            val = out.get(str(i)) if isinstance(out, dict) else None
+            if isinstance(val, str) and val.strip():
+                result.append(val.strip())
+            else:
+                result.append(original)
+                missing += 1
+        if missing:
+            log.warning("%d/%d câu không có bản dịch, giữ nguyên gốc", missing, len(texts))
         return result
 
+    def translate_texts(self, texts: list[str]) -> list[str]:
+        """Dịch danh sách chuỗi (khử trùng lặp để tiết kiệm + nhất quán)."""
+        uniq: dict[str, None] = {}
+        for t in texts:
+            uniq.setdefault(t, None)
+        unique_texts = list(uniq.keys())
+
+        translated_unique: list[str] = []
+        for start in range(0, len(unique_texts), self.batch_size):
+            batch = unique_texts[start : start + self.batch_size]
+            log.info("Dịch lô %d-%d / %d", start, start + len(batch), len(unique_texts))
+            translated_unique.extend(self._translate_batch(batch))
+
+        mapping = dict(zip(unique_texts, translated_unique))
+        return [mapping.get(t, t) for t in texts]
+
     def translate_segments(self, segments: list[Segment]) -> list[Segment]:
-        texts = [s.text for s in segments]
-        translated: list[str] = []
-        for start in range(0, len(texts), self.batch_size):
-            batch = texts[start : start + self.batch_size]
-            log.info("Dịch lô %d-%d / %d", start, start + len(batch), len(texts))
-            translated.extend(self._translate_batch(batch))
+        translated = self.translate_texts([s.text for s in segments])
         return [
             Segment(start=s.start, end=s.end, text=vi)
             for s, vi in zip(segments, translated)
@@ -93,7 +134,7 @@ class ClaudeTranslator(BaseTranslator):
         self.client = Anthropic(api_key=api_key)
         self.model = model
 
-    def _call(self, system: str, user: str) -> str:
+    def _raw_call(self, system: str, user: str) -> str:
         msg = self.client.messages.create(
             model=self.model,
             max_tokens=4096,
@@ -115,7 +156,7 @@ class GeminiTranslator(BaseTranslator):
         self.api_key = api_key
         self.model = model
 
-    def _call(self, system: str, user: str) -> str:
+    def _raw_call(self, system: str, user: str) -> str:
         url = f"{self.BASE}/{self.model}:generateContent"
         body = {
             "systemInstruction": {"parts": [{"text": system}]},

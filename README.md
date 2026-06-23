@@ -47,8 +47,11 @@ Sửa `config.yaml`:
 ## 3. Chạy
 
 ```powershell
-# Thử 1 video cụ thể (khuyến nghị chạy thử trước)
+# Thử 1 video cụ thể qua URL (TikTok chạy tốt; Douyin xem mục dưới)
 python -m src.main url "https://www.tiktok.com/@tenkenh/video/123456"
+
+# Xử lý 1 FILE video CÓ SẴN trên máy (cách ổn định nhất cho Douyin)
+python -m src.main file "D:\path\video.mp4" --title "Tieu de"
 
 # Xử lý tất cả nguồn trong config.yaml, 1 lần
 python -m src.main run
@@ -56,6 +59,31 @@ python -m src.main run
 # Quét định kỳ tự động (theo watch_interval_seconds)
 python -m src.main watch
 ```
+
+### Chế độ xử lý (`--mode`)
+Chọn cách xử lý cho mỗi video (mặc định đặt ở `config.yaml` mục `mode`, hoặc
+override bằng `--mode` trên CLI):
+
+| Mode | Ý nghĩa |
+|------|---------|
+| `voice_transcript` | Dịch giọng nói + lồng tiếng Việt + **hiện phụ đề** (mặc định) |
+| `voice_only` | Dịch giọng nói + lồng tiếng Việt, **không phụ đề** |
+| `screen_only` | **Chỉ dịch chữ trên màn hình** (giữ audio gốc, không lồng tiếng) |
+
+```powershell
+python -m src.main file "video.mp4" --mode voice_only
+python -m src.main file "video.mp4" --mode screen_only
+```
+OCR đè chữ màn hình bật/tắt riêng ở mục `ocr.enabled`. Ở `screen_only` thì OCR
+luôn bật; ở 2 chế độ voice, OCR chạy nếu `ocr.enabled: true`.
+
+### ⚠️ Về Douyin (抖音)
+Douyin chặn tải tự động bằng chữ ký `a_bogus` (sinh bởi JavaScript). yt-dlp hiện
+**không vượt được** tường này kể cả khi đã có cookies đăng nhập. Vì vậy với Douyin:
+- **Tải file về thủ công** (web hỗ trợ tải Douyin, hoặc tiện ích trình duyệt), rồi
+  dùng `python -m src.main file "duong_dan.mp4"` để chạy phần còn lại (dịch + lồng
+  tiếng + phụ đề + đăng).
+- TikTok quốc tế thì `url` chạy bình thường.
 
 Video kết quả nằm ở `data/output/<id>_vi.mp4`. Trạng thái đã xử lý lưu ở `data/state.json` (tránh làm trùng).
 
@@ -69,9 +97,32 @@ Video kết quả nằm ở `data/output/<id>_vi.mp4`. Trạng thái đã xử l
 | `src/compose/subtitles.py` | Tạo file phụ đề `.srt` |
 | `src/tts/synthesizer.py` | Lồng tiếng Việt, đồng bộ thời gian (edge-tts + ffmpeg) |
 | `src/compose/compositor.py` | Trộn audio + burn phụ đề, render video cuối |
+| `src/ocr/screen_text.py` | OCR chữ trên màn hình → dịch → đè khung trắng + chữ Việt |
 | `src/upload/*` | Đăng lên TikTok / Facebook / Instagram |
 | `src/pipeline.py` | Điều phối toàn bộ quy trình |
 | `src/main.py` | Giao diện dòng lệnh (CLI) |
+
+## 4b. Dịch chữ TRÊN MÀN HÌNH (OCR overlay)
+
+Ngoài phụ đề từ giọng nói, pipeline có thể **dịch chữ hardcoded hiển thị trong
+video** (tiêu đề, caption tiếng Trung...) rồi **đè khung trắng + chữ Việt đen**
+lên đúng vị trí chữ gốc. Bật/tắt trong `config.yaml` mục `ocr`:
+
+```yaml
+ocr:
+  enabled: true
+  sample_fps: 2.0       # khung/giây để quét (giảm = nhanh hơn, có thể sót)
+  only_cjk: true        # chỉ đè chữ Trung/Nhật/Hàn, bỏ qua watermark Latin
+  ocr_max_width: 720    # thu nhỏ khung trước khi OCR cho nhanh
+  scene_diff: 2.5       # bỏ qua khung trùng cảnh
+```
+
+- Dùng **RapidOCR** (ONNX, chạy CPU, nhận chữ Trung+Anh tốt, không cần GPU/PyTorch).
+- Tự **gom các lần xuất hiện giống nhau** theo thời gian (chống nhấp nháy/dịch lặp).
+- **Cache kết quả quét** ở `data/work/<id>/ocr_scan.json` — lần chạy lại không phải
+  quét OCR lại (rất tốn thời gian trên CPU). Xoá file này nếu muốn quét lại.
+- ⚠️ **Chậm trên CPU**: ~5-7 phút cho video 2 phút ở 2 fps. Giảm `sample_fps`
+  xuống 1.0 để nhanh gấp đôi.
 
 ## 5. Ghi chú quan trọng
 

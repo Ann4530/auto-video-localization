@@ -3,6 +3,8 @@
 """
 from __future__ import annotations
 
+import hashlib
+import re
 from pathlib import Path
 
 from .compose.compositor import Compositor
@@ -46,6 +48,7 @@ class Pipeline:
         self.compositor = Compositor(
             cfg.compose, keep_original_volume=cfg.tts.get("keep_original_volume", 0.12)
         )
+        self.mode = cfg.raw.get("mode", "voice_transcript")
 
     @property
     def transcriber(self) -> Transcriber:
@@ -56,15 +59,47 @@ class Pipeline:
                 language=t.get("language"),
                 device=t.get("device", "auto"),
                 compute_type=t.get("compute_type", "int8"),
+                cpu_threads=t.get("cpu_threads", 4),
             )
         return self._transcriber
 
     # ---------------------------------------------------------------
 
-    def process_url(self, url: str) -> Path | None:
+    def process_url(self, url: str, mode: str | None = None) -> Path | None:
         """Xử lý 1 URL video đơn lẻ, trả về đường dẫn video kết quả."""
+        if mode:
+            self.mode = mode
         # Lấy id sớm để check trùng (tải nhẹ metadata)
         item = self.downloader.download(url)
+        if self.state.is_processed(item.id):
+            log.info("Bỏ qua (đã xử lý): %s", item.id)
+            return self.state.get(item.id).get("output")  # type: ignore
+        return self._run(item)
+
+    def process_file(self, file_path: str, title: str | None = None,
+                     mode: str | None = None) -> Path | None:
+        """Xử lý 1 file video CÓ SẴN trên máy (bỏ qua bước tải).
+
+        Dùng cho nguồn khó tải tự động như Douyin: bạn tự tải file về rồi
+        đưa đường dẫn vào đây.
+        """
+        if mode:
+            self.mode = mode
+        path = Path(file_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Không thấy file: {path}")
+        # ID an toàn cho đường dẫn (tránh ký tự non-ASCII / đặc biệt làm
+        # hỏng bộ lọc subtitles của ffmpeg trên Windows).
+        safe_id = re.sub(r"[^A-Za-z0-9_-]", "", path.stem.encode("ascii", "ignore").decode())
+        if not safe_id:
+            safe_id = "video_" + hashlib.md5(str(path).encode()).hexdigest()[:8]
+        item = VideoItem(
+            id=safe_id,
+            url=str(path),
+            title=title or path.stem,
+            path=path,
+            info={},
+        )
         if self.state.is_processed(item.id):
             log.info("Bỏ qua (đã xử lý): %s", item.id)
             return self.state.get(item.id).get("output")  # type: ignore
@@ -75,31 +110,47 @@ class Pipeline:
         work = cfg.work_dir / item.id
         work.mkdir(parents=True, exist_ok=True)
 
-        # 1) Bóc lời
-        segments, src_lang = self.transcriber.transcribe(item.path)
+        mode = self.mode
+        # voice_transcript: lồng tiếng + phụ đề
+        # voice_only:       lồng tiếng, không phụ đề
+        # screen_only:      chỉ đè chữ màn hình, giữ audio gốc
+        do_voice = mode in ("voice_transcript", "voice_only")
+        do_subtitle = mode == "voice_transcript"
+        do_ocr = cfg.ocr.get("enabled", False) or mode == "screen_only"
+        log.info("Chế độ: %s (lồng tiếng=%s, phụ đề=%s, OCR=%s)",
+                 mode, do_voice, do_subtitle, do_ocr)
 
-        # 2) Dịch sang tiếng Việt
-        vi_segments = self.translator.translate_segments(segments)
+        src_lang = ""
+        srt_path = None
+        vi_voice = None
 
-        # 3) Tạo phụ đề .srt
-        srt_path = write_srt(vi_segments, work / "vi.srt")
+        if do_voice:
+            # 1) Bóc lời  2) Dịch  3) (tuỳ) phụ đề  4) Lồng tiếng
+            segments, src_lang = self.transcriber.transcribe(item.path)
+            vi_segments = self.translator.translate_segments(segments)
+            if do_subtitle:
+                srt_path = write_srt(vi_segments, work / "vi.srt")
+                # xuất kèm transcript ra thư mục output cho tiện
+                write_srt(vi_segments, cfg.output_dir / f"{item.id}_vi.srt")
+            total = self.compositor.video_duration(item.path)
+            synth = Synthesizer(
+                voice=cfg.tts.get("voice", "vi-VN-HoaiMyNeural"),
+                rate=cfg.tts.get("rate", "+0%"),
+                work_dir=work,
+            )
+            vi_voice = synth.synthesize(vi_segments, total)
 
-        # 4) Lồng tiếng
-        total = self.compositor.video_duration(item.path)
-        synth = Synthesizer(
-            voice=cfg.tts.get("voice", "vi-VN-HoaiMyNeural"),
-            rate=cfg.tts.get("rate", "+0%"),
-            work_dir=work,
-        )
-        vi_voice = synth.synthesize(vi_segments, total)
+        # 4b) OCR chữ trên màn hình -> đè tiếng Việt
+        overlays = self._ocr_overlays(item.path, work) if do_ocr else []
 
         # 5) Ghép video cuối
         out_path = cfg.output_dir / f"{item.id}_vi.mp4"
         self.compositor.compose(
             video=item.path,
             vi_voice=vi_voice,
-            srt=srt_path if cfg.compose.get("burn_subtitles") else None,
+            srt=srt_path,
             out_path=out_path,
+            overlays=overlays,
         )
 
         # 6) Đăng
@@ -110,6 +161,7 @@ class Pipeline:
             {
                 "title": item.title,
                 "url": item.url,
+                "mode": mode,
                 "source_lang": src_lang,
                 "output": str(out_path),
                 "uploaded": uploaded,
@@ -117,6 +169,26 @@ class Pipeline:
         )
         log.info("HOÀN TẤT: %s -> %s", item.title, out_path.name)
         return out_path
+
+    def _ocr_overlays(self, video: Path, work: Path) -> list:
+        """Chạy OCR + dịch chữ trên màn hình, trả danh sách Overlay."""
+        from .ocr.screen_text import ScreenTextTranslator
+
+        o = self.cfg.ocr
+        stt = ScreenTextTranslator(
+            translator=self.translator,
+            sample_fps=o.get("sample_fps", 2.0),
+            min_score=o.get("min_score", 0.6),
+            only_cjk=o.get("only_cjk", True),
+            font_path=o.get("font", "C:/Windows/Fonts/arial.ttf"),
+            ocr_max_width=o.get("ocr_max_width", 960),
+            scene_diff=o.get("scene_diff", 2.5),
+        )
+        try:
+            return stt.process(video, work)
+        except Exception as e:  # noqa: BLE001
+            log.error("OCR lỗi (bỏ qua overlay): %s", e)
+            return []
 
     def _upload(self, item: VideoItem, video: Path) -> dict:
         cfg = self.cfg

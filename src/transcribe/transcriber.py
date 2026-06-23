@@ -25,10 +25,18 @@ class Transcriber:
         language: str | None = None,
         device: str = "auto",
         compute_type: str = "int8",
+        cpu_threads: int = 4,
     ):
         self.language = language
         log.info("Nạp model whisper '%s' (device=%s)", model, device)
-        self._model = WhisperModel(model, device=device, compute_type=compute_type)
+        # Giới hạn luồng để tránh MKL xin quá nhiều RAM (mkl_malloc failed)
+        self._model = WhisperModel(
+            model,
+            device=device,
+            compute_type=compute_type,
+            cpu_threads=cpu_threads,
+            num_workers=1,
+        )
 
     def transcribe(self, media_path: Path) -> tuple[list[Segment], str]:
         """Trả về (danh sách segment, mã ngôn ngữ phát hiện được)."""

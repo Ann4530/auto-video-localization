@@ -59,8 +59,16 @@ class Config:
         return self.raw.get("compose", {})
 
     @property
+    def ocr(self) -> dict[str, Any]:
+        return self.raw.get("ocr", {})
+
+    @property
     def upload(self) -> dict[str, Any]:
         return self.raw.get("upload", {})
+
+    @property
+    def mode(self) -> str:
+        return self.raw.get("mode", "voice_transcript")
 
     @property
     def watch_interval(self) -> int:

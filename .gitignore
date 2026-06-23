@@ -5,6 +5,7 @@ data/downloads/
 data/work/
 data/output/
 data/state.json
+data/douyin_cookies.txt
 .venv/
 .venv-1/
 venv/

@@ -3,6 +3,14 @@
 #  cần sửa code.
 # ============================================================
 
+# Chế độ xử lý mặc định (có thể override bằng --mode trên CLI):
+#   voice_transcript : dịch giọng nói + lồng tiếng + HIỆN phụ đề
+#   voice_only       : dịch giọng nói + lồng tiếng, KHÔNG phụ đề
+#   screen_only      : CHỈ dịch chữ trên màn hình (giữ audio gốc, không lồng tiếng)
+# Lưu ý: OCR đè chữ màn hình bật/tắt riêng ở mục 'ocr' bên dưới; ở chế độ
+# screen_only thì OCR luôn bật. Ở 2 chế độ voice, OCR chạy nếu ocr.enabled=true.
+mode: "voice_transcript"
+
 # Các kênh / nguồn cần theo dõi. Mỗi mục là 1 URL kênh hoặc
 # 1 URL video. Khi chạy ở chế độ --watch, các kênh sẽ được
 # quét định kỳ để lấy video mới.
@@ -26,11 +34,12 @@ download:
 transcribe:
   # Model whisper: tiny / base / small / medium / large-v3
   # large-v3 chính xác nhất, base/small đủ dùng và nhanh
-  model: "small"
+  model: "base"
   # Để trống = tự nhận diện ngôn ngữ nguồn. Đặt "zh" nếu chắc chắn là tiếng Trung
   language: null
   device: "auto"          # auto / cpu / cuda
   compute_type: "int8"    # int8 (CPU) / float16 (GPU)
+  cpu_threads: 4          # giảm nếu máy yếu / gặp lỗi mkl_malloc
 
 translate:
   target_language: "Tiếng Việt"
@@ -49,6 +58,17 @@ tts:
   rate: "+0%"     # tốc độ đọc, ví dụ "+10%" cho nhanh hơn
   # Giữ lại 1 phần nhạc nền gốc (0.0 = bỏ hẳn audio gốc, 0.15 = giữ nhẹ nền)
   keep_original_volume: 0.12
+
+ocr:
+  # Dịch chữ HIỂN THỊ TRÊN MÀN HÌNH (hardcoded) -> đè khung trắng + chữ Việt đen.
+  # Nặng trên CPU: video càng dài / lấy mẫu càng nhiều thì càng lâu.
+  enabled: true
+  sample_fps: 2.0       # số khung/giây để quét OCR (giảm = nhanh hơn, có thể sót)
+  min_score: 0.6        # ngưỡng tin cậy OCR
+  only_cjk: true        # chỉ đè chữ có ký tự Trung/Nhật/Hàn (bỏ qua chữ Latin/watermark)
+  font: "C:/Windows/Fonts/arial.ttf"   # font hỗ trợ tiếng Việt
+  ocr_max_width: 720    # thu nhỏ khung về tối đa rộng này trước khi OCR (nhanh hơn)
+  scene_diff: 2.5       # ngưỡng coi 2 khung là cùng cảnh -> bỏ qua OCR lại
 
 compose:
   # Burn (gắn cứng) phụ đề vào video?

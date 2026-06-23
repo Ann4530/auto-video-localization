@@ -18,7 +18,7 @@ class Compositor:
         r = subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration",
              "-of", "default=noprint_wrappers=1:nokey=1", str(video)],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         try:
             return float(r.stdout.strip())
@@ -38,46 +38,76 @@ class Compositor:
     def compose(
         self,
         video: Path,
-        vi_voice: Path,
+        vi_voice: Path | None,
         srt: Path | None,
         out_path: Path,
+        overlays: list | None = None,
     ) -> Path:
         """Tạo video cuối cùng.
 
-        - Trộn giọng Việt (to) + audio gốc (nhỏ, làm nền) bằng amix.
-        - Nếu burn_subtitles=True và có srt -> gắn cứng phụ đề.
+        - vi_voice != None: trộn giọng Việt (to) + audio gốc (nhỏ, nền).
+          vi_voice == None: GIỮ NGUYÊN audio gốc (chế độ chỉ đè chữ màn hình).
+        - srt != None & burn_subtitles: gắn cứng phụ đề.
+        - overlays: PNG khung trắng + chữ Việt đè lên chữ gốc theo thời gian.
         """
         burn = bool(self.cfg.get("burn_subtitles", True)) and srt is not None
         kov = self.keep_original_volume
+        overlays = overlays or []
 
-        filter_parts = [
-            f"[0:a]volume={kov}[orig]",
-            "[1:a]volume=1.0[voice]",
-            "[orig][voice]amix=inputs=2:duration=first:normalize=0[aout]",
-        ]
-        v_map = "0:v"
+        inputs: list[str] = ["-i", str(video)]
+        filter_parts: list[str] = []
+
+        # --- Audio ---
+        if vi_voice is not None:
+            inputs += ["-i", str(vi_voice)]
+            voice_idx = 1
+            next_input = 2
+            filter_parts += [
+                f"[0:a]volume={kov}[orig]",
+                f"[{voice_idx}:a]volume=1.0[voice]",
+                "[orig][voice]amix=inputs=2:duration=first:normalize=0[aout]",
+            ]
+            a_map = "[aout]"
+        else:
+            next_input = 1
+            a_map = "0:a?"   # giữ audio gốc (nếu có)
+
+        # --- Video: subtitles -> đè từng overlay ---
+        cur = "[0:v]"
         if burn:
             srt_escaped = str(srt).replace("\\", "/").replace(":", "\\:")
             filter_parts.append(
-                f"[0:v]subtitles='{srt_escaped}':force_style='{self._subtitle_style()}'[vout]"
+                f"{cur}subtitles='{srt_escaped}':force_style='{self._subtitle_style()}'[vbase]"
             )
-            v_map = "[vout]"
+            cur = "[vbase]"
 
-        filter_complex = ";".join(filter_parts)
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", str(video),
-            "-i", str(vi_voice),
-            "-filter_complex", filter_complex,
+        for idx, ov in enumerate(overlays):
+            in_i = next_input + idx
+            inputs += ["-i", str(ov.png)]
+            out_label = f"[v{idx}]"
+            filter_parts.append(
+                f"{cur}[{in_i}:v]overlay={ov.x}:{ov.y}:"
+                f"enable='between(t,{ov.start:.2f},{ov.end:.2f})'{out_label}"
+            )
+            cur = out_label
+
+        v_map = "0:v" if cur == "[0:v]" else cur
+
+        cmd = ["ffmpeg", "-y", *inputs]
+        if filter_parts:
+            cmd += ["-filter_complex", ";".join(filter_parts)]
+        cmd += [
             "-map", v_map,
-            "-map", "[aout]",
+            "-map", a_map,
             "-c:v", "libx264", "-preset", "medium", "-crf", "20",
             "-c:a", "aac", "-b:a", "192k",
             "-shortest",
             str(out_path),
         ]
         log.info("Render video cuối -> %s", out_path.name)
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace"
+        )
         if proc.returncode != 0:
             log.error("ffmpeg lỗi:\n%s", proc.stderr[-2000:])
             raise RuntimeError("Render thất bại")
