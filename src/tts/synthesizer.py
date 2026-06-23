@@ -1,10 +1,12 @@
 """Tạo audio lồng tiếng Việt từ các segment đã dịch, bằng edge-tts.
 
-Cách làm để giữ đồng bộ với video:
+Cách làm để giữ đồng bộ với video (thuật toán con trỏ thời gian):
   1. Với mỗi segment, tạo 1 file audio tiếng Việt.
-  2. Nếu audio dài hơn khoảng thời gian gốc -> tăng tốc (atempo) cho vừa.
-  3. Đặt mỗi đoạn vào đúng mốc thời gian start trên 1 timeline,
-     chèn khoảng lặng giữa các đoạn.
+  2. Dùng 1 con trỏ `cursor` = thời điểm kết thúc đoạn vừa đặt. Đoạn kế tiếp
+     bắt đầu tại max(start gốc, cursor) -> KHÔNG bao giờ chồng lên đoạn trước.
+  3. Nếu giọng Việt dài hơn khoảng trống tới đoạn sau -> tăng tốc (atempo,
+     giữ cao độ) cho vừa, tối đa `max_speed`. Phần tràn được đẩy sang sau và
+     tự re-sync lại mỗi khi gặp khoảng lặng -> không trôi tích luỹ vô hạn.
   4. Ghép tất cả thành 1 file audio dài bằng video.
 
 Yêu cầu: ffmpeg phải có sẵn trong PATH.
@@ -29,10 +31,13 @@ class Synthesizer:
         voice: str = "vi-VN-HoaiMyNeural",
         rate: str = "+0%",
         work_dir: Path | None = None,
+        max_speed: float = 2.0,
     ):
         self.voice = voice
         self.rate = rate
         self.work_dir = work_dir or Path(".")
+        # atempo của ffmpeg chỉ chạy 0.5–2.0 mỗi lần -> giới hạn ở 2.0 cho an toàn.
+        self.max_speed = max(1.0, min(max_speed, 2.0))
 
     async def _tts_one(self, text: str, out: Path) -> None:
         communicate = edge_tts.Communicate(text, self.voice, rate=self.rate)
@@ -51,20 +56,36 @@ class Synthesizer:
         except ValueError:
             return 0.0
 
-    def _fit_to_slot(self, src: Path, slot: float, dst: Path) -> None:
-        """Tăng tốc audio nếu dài hơn slot thời gian gốc (giữ pitch)."""
-        dur = self._duration(src)
-        if slot <= 0 or dur <= slot or dur == 0:
-            # đủ chỗ -> copy nguyên
-            subprocess.run(
-                ["ffmpeg", "-y", "-i", str(src), "-c", "copy", str(dst)],
-                capture_output=True,
-            )
-            return
-        speed = min(dur / slot, 2.0)  # giới hạn 2x cho dễ nghe
+    def _fit_to_room(self, src: Path, dur: float, room: float, dst: Path) -> float:
+        """Đặt audio vào khoảng trống `room` (giây), tăng tốc nếu cần (giữ pitch).
+
+        Trả về thời lượng audio SAU khi xử lý (để con trỏ thời gian tiến đúng).
+        """
+        if dur <= 0:
+            self._copy(src, dst)
+            return dur
+        if room <= 0:
+            # Đã bị trôi (cursor vượt mốc đoạn sau) -> nén tối đa để bắt kịp.
+            speed = self.max_speed
+        elif dur > room:
+            speed = min(dur / room, self.max_speed)
+        else:
+            speed = 1.0
+
+        if speed <= 1.0:
+            self._copy(src, dst)
+            return dur
         subprocess.run(
             ["ffmpeg", "-y", "-i", str(src), "-filter:a", f"atempo={speed:.3f}",
              str(dst)],
+            capture_output=True,
+        )
+        return dur / speed
+
+    @staticmethod
+    def _copy(src: Path, dst: Path) -> None:
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", str(src), "-c", "copy", str(dst)],
             capture_output=True,
         )
 
@@ -81,15 +102,23 @@ class Synthesizer:
         log.info("Tạo giọng đọc cho %d segment", len(segments))
         asyncio.run(gen_all())
 
-        # Khớp từng đoạn vào slot thời lượng gốc
+        # Đặt từng đoạn theo con trỏ thời gian: không chồng lấn, tự re-sync ở khoảng lặng.
         placed: list[tuple[float, Path]] = []
+        cursor = 0.0
+        n = len(segments)
         for i, seg in enumerate(segments):
             raw = seg_dir / f"raw_{i:04d}.mp3"
             if not raw.exists():
                 continue
+            dur = self._duration(raw)
+            start = max(seg.start, cursor)
+            # Khoảng trống tới mốc bắt đầu (gốc) của đoạn kế tiếp.
+            next_start = segments[i + 1].start if i + 1 < n else total_duration
+            room = next_start - start
             fitted = seg_dir / f"fit_{i:04d}.mp3"
-            self._fit_to_slot(raw, seg.end - seg.start, fitted)
-            placed.append((seg.start, fitted))
+            final_dur = self._fit_to_room(raw, dur, room, fitted)
+            placed.append((start, fitted))
+            cursor = start + final_dur
 
         return self._build_timeline(placed, total_duration, seg_dir)
 

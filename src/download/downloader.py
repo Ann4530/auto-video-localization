@@ -79,6 +79,17 @@ class Downloader:
             return [info]
         return [e for e in entries if e][:limit]
 
+    def probe(self, url: str) -> tuple[str, dict[str, Any]]:
+        """Lấy metadata (id, info) mà KHÔNG tải file -> để check trùng cho rẻ."""
+        url = normalize_url(url)
+        opts = self._ydl_opts({"skip_download": True})
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        if isinstance(info, dict) and "entries" in info:
+            entries = [e for e in info["entries"] if e]
+            info = entries[0] if entries else info
+        return str(info.get("id")), info  # type: ignore[union-attr]
+
     def download(self, url: str) -> VideoItem:
         """Tải 1 video về đĩa và trả về VideoItem."""
         url = normalize_url(url)

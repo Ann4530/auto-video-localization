@@ -11,3 +11,7 @@ pyyaml>=6.0
 requests>=2.31.0
 
 # Uploading: Facebook / Instagram use Graph API via requests; TikTok uses its own API
+
+# Optional (tách giọng nền cho bản lồng tiếng sạch hơn — nặng, nên có GPU):
+#   pip install demucs
+# Bật bằng tts.separate_vocals: true trong config.yaml

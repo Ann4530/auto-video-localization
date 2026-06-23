@@ -3,7 +3,7 @@
 Tự động: **tải video (TikTok / Douyin) → bóc lời → dịch sang tiếng Việt → lồng tiếng + phụ đề → đăng lên TikTok / Facebook / Instagram**.
 
 ```
-Tải (yt-dlp) ─▶ Bóc lời (faster-whisper) ─▶ Dịch (Claude API)
+Tải (yt-dlp) ─▶ Bóc lời (faster-whisper) ─▶ Dịch (Gemini / Claude)
         │                                          │
         ▼                                          ▼
    Lồng tiếng (edge-tts)  ◀── Phụ đề .srt ──▶ Ghép video (ffmpeg) ─▶ Đăng
@@ -24,7 +24,7 @@ Việc đảm bảo quyền sử dụng nội dung là trách nhiệm của bạ
   (Windows: `winget install Gyan.FFmpeg` hoặc `choco install ffmpeg`)
 
 ```powershell
-cd d:\anhhp\Project\Video-workflow
+cd d:\anhhp\auto-video-localization
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -35,13 +35,18 @@ pip install -r requirements.txt
 ```powershell
 copy .env.example .env      # rồi điền API key / token
 ```
-- **ANTHROPIC_API_KEY** (bắt buộc, để dịch) — lấy tại https://console.anthropic.com/
+Key dịch thuật — chỉ cần **một** trong hai, khớp với `translate.provider` trong `config.yaml`:
+- **GEMINI_API_KEY** — mặc định (`provider: gemini`), lấy tại https://aistudio.google.com/apikey
+- **ANTHROPIC_API_KEY** — nếu đổi `provider: claude`, lấy tại https://console.anthropic.com/
 - Token TikTok / Facebook / Instagram chỉ cần khi bật đăng tự động.
 
 Sửa `config.yaml`:
 - `sources`: dán URL kênh hoặc URL video cần xử lý.
 - `transcribe.model`: `small` (nhanh) → `large-v3` (chính xác nhất).
+- `translate.provider`: `gemini` (mặc định) hoặc `claude`.
 - `tts.voice`: giọng đọc tiếng Việt (`vi-VN-HoaiMyNeural` nữ / `vi-VN-NamMinhNeural` nam).
+- `tts.max_speed`: tăng tốc tối đa khi lồng tiếng để khớp thời gian (1.0–2.0).
+- `tts.separate_vocals`: `true` để tách giọng nền bằng Demucs (cần `pip install demucs`).
 - `upload`: bật `true` từng nền tảng khi đã có token. Để `false` = chỉ xuất file ra `data/output/`.
 
 ## 3. Chạy
@@ -65,8 +70,9 @@ Video kết quả nằm ở `data/output/<id>_vi.mp4`. Trạng thái đã xử l
 |--------|-----------|
 | `src/download/downloader.py` | Tải video & liệt kê video mới của kênh (yt-dlp) |
 | `src/transcribe/transcriber.py` | Bóc lời + timestamp (faster-whisper) |
-| `src/translate/translator.py` | Dịch sang tiếng Việt, giữ khớp segment (Claude) |
+| `src/translate/translator.py` | Dịch sang tiếng Việt, giữ khớp segment (Gemini/Claude) |
 | `src/compose/subtitles.py` | Tạo file phụ đề `.srt` |
+| `src/audio/separator.py` | (Tuỳ chọn) tách giọng khỏi nhạc nền — Demucs |
 | `src/tts/synthesizer.py` | Lồng tiếng Việt, đồng bộ thời gian (edge-tts + ffmpeg) |
 | `src/compose/compositor.py` | Trộn audio + burn phụ đề, render video cuối |
 | `src/upload/*` | Đăng lên TikTok / Facebook / Instagram |
@@ -83,5 +89,6 @@ Video kết quả nằm ở `data/output/<id>_vi.mp4`. Trạng thái đã xử l
 ## 6. Hướng phát triển tiếp
 - Thêm nguồn YouTube (yt-dlp hỗ trợ sẵn).
 - Tự động host video để đăng Instagram.
-- Tách giọng nói khỏi nhạc nền (Demucs) để lồng tiếng sạch hơn.
+- ~~Tách giọng nói khỏi nhạc nền (Demucs)~~ ✅ đã có (`tts.separate_vocals`).
+- Lồng tiếng đa người nói (speaker diarization) như pyvideotrans.
 - Hàng đợi xử lý song song nhiều video.

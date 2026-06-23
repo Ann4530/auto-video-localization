@@ -20,8 +20,8 @@ _SYSTEM = """Bạn là dịch giả phụ đề chuyên nghiệp. Nhiệm vụ: 
 video sang {target}. Phong cách: {style}.
 
 Quy tắc bắt buộc:
-- Trả về ĐÚNG số dòng như đầu vào, theo định dạng JSON array các chuỗi.
-- Mỗi phần tử là bản dịch của câu cùng chỉ số. KHÔNG gộp, KHÔNG tách câu.
+- Trả về JSON array, MỖI phần tử là object {{"i": <chỉ số gốc>, "text": "<bản dịch>"}}.
+- GIỮ NGUYÊN chỉ số "i" của câu gốc. Phải đủ tất cả chỉ số, KHÔNG gộp, KHÔNG tách câu.
 - Dịch thoát ý, tự nhiên như người Việt nói, KHÔNG dịch word-by-word.
 - Giữ độ dài tương đương để khớp khẩu hình/lồng tiếng. Không thêm chú thích.
 - Chỉ trả JSON array, không kèm văn bản nào khác."""
@@ -59,6 +59,30 @@ class BaseTranslator:
         except json.JSONDecodeError:
             log.warning("Không parse được JSON, giữ nguyên lô này")
             return texts
+        if not isinstance(out, list):
+            log.warning("JSON không phải array, giữ nguyên lô này")
+            return texts
+
+        # Ưu tiên ghép theo chỉ số "i" -> 1 câu thiếu/thừa KHÔNG làm lệch các câu khác.
+        by_index: dict[int, str] = {}
+        for item in out:
+            if isinstance(item, dict) and "i" in item:
+                try:
+                    idx = int(item["i"])
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= idx < len(texts):
+                    by_index[idx] = str(item.get("text", "")).strip() or texts[idx]
+
+        if by_index:
+            missing = [i for i in range(len(texts)) if i not in by_index]
+            if missing:
+                log.warning("Thiếu %d câu dịch, giữ nguyên gốc các câu: %s",
+                            len(missing), missing)
+            # Câu nào model bỏ sót -> giữ nguyên văn bản gốc (không để trống).
+            return [by_index.get(i, texts[i]) for i in range(len(texts))]
+
+        # Dự phòng: model trả mảng phẳng (không có "i") -> ghép theo thứ tự.
         result = [
             (item["text"] if isinstance(item, dict) else str(item)) for item in out
         ]
@@ -67,7 +91,7 @@ class BaseTranslator:
                 "Số dòng dịch (%d) khác đầu vào (%d), căn chỉnh lại",
                 len(result), len(texts),
             )
-            result = _align(result, len(texts))
+            result = _align(result, texts)
         return result
 
     def translate_segments(self, segments: list[Segment]) -> list[Segment]:
@@ -178,7 +202,9 @@ def _strip_code_fence(text: str) -> str:
     return text
 
 
-def _align(result: list[str], n: int) -> list[str]:
+def _align(result: list[str], texts: list[str]) -> list[str]:
+    """Căn chỉnh độ dài khi ghép theo thứ tự: thiếu thì bù bằng câu gốc, thừa thì cắt."""
+    n = len(texts)
     if len(result) < n:
-        result = result + [""] * (n - len(result))
+        result = result + texts[len(result):]
     return result[:n]

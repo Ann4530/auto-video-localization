@@ -41,17 +41,22 @@ class Compositor:
         vi_voice: Path,
         srt: Path | None,
         out_path: Path,
+        background: Path | None = None,
     ) -> Path:
         """Tạo video cuối cùng.
 
-        - Trộn giọng Việt (to) + audio gốc (nhỏ, làm nền) bằng amix.
+        - Trộn giọng Việt (to) + audio nền (nhỏ) bằng amix.
+        - `background`: track nhạc nền đã tách giọng (no_vocals). Nếu None ->
+          dùng audio gốc của video (vẫn còn giọng gốc ở mức nhỏ).
         - Nếu burn_subtitles=True và có srt -> gắn cứng phụ đề.
         """
         burn = bool(self.cfg.get("burn_subtitles", True)) and srt is not None
         kov = self.keep_original_volume
 
+        # Nguồn audio nền: track đã tách giọng (input 2) hoặc audio gốc (input 0).
+        bg_label = "[2:a]" if background is not None else "[0:a]"
         filter_parts = [
-            f"[0:a]volume={kov}[orig]",
+            f"{bg_label}volume={kov}[orig]",
             "[1:a]volume=1.0[voice]",
             "[orig][voice]amix=inputs=2:duration=first:normalize=0[aout]",
         ]
@@ -64,10 +69,12 @@ class Compositor:
             v_map = "[vout]"
 
         filter_complex = ";".join(filter_parts)
+        inputs = ["-i", str(video), "-i", str(vi_voice)]
+        if background is not None:
+            inputs += ["-i", str(background)]
         cmd = [
             "ffmpeg", "-y",
-            "-i", str(video),
-            "-i", str(vi_voice),
+            *inputs,
             "-filter_complex", filter_complex,
             "-map", v_map,
             "-map", "[aout]",

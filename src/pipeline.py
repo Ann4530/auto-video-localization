@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .audio.separator import VocalRemover
 from .compose.compositor import Compositor
 from .compose.subtitles import write_srt
 from .config import Config
@@ -63,11 +64,25 @@ class Pipeline:
 
     def process_url(self, url: str) -> Path | None:
         """Xử lý 1 URL video đơn lẻ, trả về đường dẫn video kết quả."""
-        # Lấy id sớm để check trùng (tải nhẹ metadata)
+        # Lấy id qua metadata (KHÔNG tải file) để check trùng trước khi tốn băng thông.
+        try:
+            vid, _ = self.downloader.probe(url)
+        except Exception as e:  # noqa: BLE001
+            log.warning("Không lấy được metadata (%s), tải thẳng rồi check: %s", url, e)
+            vid = ""
+        if vid and self.state.is_processed(vid):
+            log.info("Bỏ qua (đã xử lý): %s", vid)
+            entry = self.state.get(vid) or {}
+            out = entry.get("output")
+            return Path(out) if out else None
+
         item = self.downloader.download(url)
+        # Phòng khi probe thất bại: kiểm tra lại sau khi đã có id thật.
         if self.state.is_processed(item.id):
             log.info("Bỏ qua (đã xử lý): %s", item.id)
-            return self.state.get(item.id).get("output")  # type: ignore
+            entry = self.state.get(item.id) or {}
+            out = entry.get("output")
+            return Path(out) if out else None
         return self._run(item)
 
     def _run(self, item: VideoItem) -> Path:
@@ -90,8 +105,16 @@ class Pipeline:
             voice=cfg.tts.get("voice", "vi-VN-HoaiMyNeural"),
             rate=cfg.tts.get("rate", "+0%"),
             work_dir=work,
+            max_speed=float(cfg.tts.get("max_speed", 2.0)),
         )
         vi_voice = synth.synthesize(vi_segments, total)
+
+        # 4b) (Tuỳ chọn) tách nhạc nền sạch để khỏi nghe lẫn giọng gốc
+        background = None
+        if cfg.tts.get("separate_vocals"):
+            background = VocalRemover(
+                model=cfg.tts.get("demucs_model", "htdemucs")
+            ).instrumental(item.path, work)
 
         # 5) Ghép video cuối
         out_path = cfg.output_dir / f"{item.id}_vi.mp4"
@@ -100,6 +123,7 @@ class Pipeline:
             vi_voice=vi_voice,
             srt=srt_path if cfg.compose.get("burn_subtitles") else None,
             out_path=out_path,
+            background=background,
         )
 
         # 6) Đăng
@@ -156,6 +180,7 @@ class Pipeline:
     def process_sources(self) -> list[Path]:
         """Quét tất cả nguồn trong config, xử lý video mới."""
         outputs: list[Path] = []
+        failures: list[str] = []
         limit = self.cfg.download.get("max_per_channel", 5)
         for src in self.cfg.sources:
             log.info("Quét nguồn: %s", src)
@@ -163,6 +188,7 @@ class Pipeline:
                 entries = self.downloader.list_channel_videos(src, limit)
             except Exception as e:  # noqa: BLE001
                 log.error("Không quét được %s: %s", src, e)
+                failures.append(src)
                 continue
             for entry in entries:
                 vid = str(entry.get("id", ""))
@@ -175,4 +201,7 @@ class Pipeline:
                         outputs.append(Path(out))
                 except Exception as e:  # noqa: BLE001
                     log.error("Lỗi xử lý %s: %s", url, e)
+                    failures.append(url)
+        if failures:
+            log.warning("Hoàn tất với %d video lỗi: %s", len(failures), failures)
         return outputs

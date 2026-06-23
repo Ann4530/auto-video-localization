@@ -47,8 +47,15 @@ tts:
   # vi-VN-HoaiMyNeural (nữ) | vi-VN-NamMinhNeural (nam)
   voice: "vi-VN-HoaiMyNeural"
   rate: "+0%"     # tốc độ đọc, ví dụ "+10%" cho nhanh hơn
+  # Tăng tốc tối đa khi giọng Việt dài hơn câu gốc (1.0–2.0). Cao hơn = khớp
+  # thời gian tốt hơn nhưng nghe gấp. ffmpeg atempo giới hạn 2.0.
+  max_speed: 2.0
   # Giữ lại 1 phần nhạc nền gốc (0.0 = bỏ hẳn audio gốc, 0.15 = giữ nhẹ nền)
   keep_original_volume: 0.12
+  # Tách giọng nói khỏi nhạc nền bằng Demucs trước khi lồng tiếng (cần
+  # `pip install demucs`, nặng, nên có GPU). Bật để hết lẫn giọng gốc.
+  separate_vocals: false
+  demucs_model: "htdemucs"
 
 compose:
   # Burn (gắn cứng) phụ đề vào video?
