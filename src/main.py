@@ -25,6 +25,9 @@ def main() -> None:
     p_url = sub.add_parser("url", help="Xử lý 1 URL video cụ thể")
     p_url.add_argument("url")
 
+    p_file = sub.add_parser("file", help="Xử lý 1 file video có sẵn trên đĩa")
+    p_file.add_argument("path")
+
     sub.add_parser("run", help="Xử lý tất cả nguồn trong config 1 lần")
     sub.add_parser("watch", help="Quét nguồn định kỳ")
 
@@ -34,6 +37,9 @@ def main() -> None:
 
     if args.command == "url":
         out = pipeline.process_url(args.url)
+        log.info("Kết quả: %s", out)
+    elif args.command == "file":
+        out = pipeline.process_file(args.path)
         log.info("Kết quả: %s", out)
     elif args.command == "run":
         outs = pipeline.process_sources()

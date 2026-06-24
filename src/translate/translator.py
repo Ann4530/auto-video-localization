@@ -8,6 +8,7 @@ Chọn nhà cung cấp qua config: translate.provider = "claude" | "gemini".
 from __future__ import annotations
 
 import json
+import time
 
 import requests
 
@@ -134,10 +135,14 @@ class GeminiTranslator(BaseTranslator):
 
     def __init__(self, api_key: str, model: str = "gemini-2.5-flash", **kw):
         super().__init__(**kw)
-        if not api_key:
+        # Cho phép nhiều key (ngăn cách bằng dấu phẩy) để xoay khi hết quota.
+        self.keys = [k.strip() for k in str(api_key).split(",") if k.strip()]
+        if not self.keys:
             raise ValueError("Thiếu GEMINI_API_KEY trong .env")
-        self.api_key = api_key
+        self._idx = 0  # key đang dùng
         self.model = model
+        if len(self.keys) > 1:
+            log.info("Gemini: có %d key, sẽ tự xoay khi hết quota", len(self.keys))
 
     def _call(self, system: str, user: str) -> str:
         url = f"{self.BASE}/{self.model}:generateContent"
@@ -150,19 +155,88 @@ class GeminiTranslator(BaseTranslator):
                 "responseMimeType": "application/json",
             },
         }
-        resp = requests.post(
-            url,
-            params={"key": self.api_key},
-            json=body,
-            timeout=120,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        try:
-            return data["candidates"][0]["content"]["parts"][0]["text"]
-        except (KeyError, IndexError):
-            log.warning("Phản hồi Gemini bất thường: %s", data)
-            return "[]"
+        # Chiến lược:
+        #  - 429 (rate-limit/quota): xoay sang key kế tiếp. Nếu CẢ vòng key đều
+        #    429 -> chờ (rate-limit theo phút sẽ tự reset) rồi thử lại vòng mới.
+        #  - 5xx / lỗi mạng (server tạm thời): chờ rồi thử lại, có xoay key.
+        #  - Lỗi khác (vd 400/403): báo ngay.
+        n = len(self.keys)
+        max_rounds = 6          # số vòng quét hết các key trước khi bỏ cuộc
+        server_retries = 0      # số lần thử lại do lỗi 5xx/mạng
+        max_server_retries = 6
+        backoff = 2.0
+        rate_limited_in_round = 0
+        last_err: Exception | None = None
+
+        while True:
+            key = self.keys[self._idx]
+            try:
+                resp = requests.post(
+                    url, params={"key": key}, json=body, timeout=120
+                )
+            except requests.RequestException as e:  # lỗi mạng -> thử lại
+                last_err = e
+                server_retries += 1
+                if server_retries > max_server_retries:
+                    raise RuntimeError(f"Lỗi mạng liên tục khi gọi Gemini: {e}")
+                log.warning("Lỗi mạng khi gọi Gemini (%s), thử lại sau %.0fs", e, backoff)
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 30)
+                continue
+
+            if resp.status_code == 429:
+                rate_limited_in_round += 1
+                self._idx = (self._idx + 1) % n
+                if rate_limited_in_round >= n:
+                    # Cả vòng key đều bị giới hạn -> chờ reset (free tier reset theo phút).
+                    max_rounds -= 1
+                    if max_rounds <= 0:
+                        raise RuntimeError(
+                            f"Tất cả {n} key Gemini vẫn bị 429 sau nhiều lần chờ. "
+                            "Có thể đã hết quota NGÀY. Thêm key mới vào GEMINI_API_KEY "
+                            "hoặc chờ quota reset."
+                        )
+                    wait = 65  # rate-limit theo phút -> chờ ~1 phút
+                    log.warning(
+                        "Cả %d key đều bị 429, chờ %ds cho quota reset rồi thử lại "
+                        "(còn %d vòng)", n, wait, max_rounds,
+                    )
+                    time.sleep(wait)
+                    rate_limited_in_round = 0
+                else:
+                    log.warning(
+                        "Key Gemini #%d bị 429, xoay sang key kế tiếp",
+                        (self._idx - 1) % n + 1,
+                    )
+                continue
+
+            if resp.status_code in (500, 502, 503, 504):
+                last_err = requests.HTTPError(
+                    f"{resp.status_code} {resp.reason}", response=resp
+                )
+                server_retries += 1
+                if server_retries > max_server_retries:
+                    raise RuntimeError(
+                        f"Gemini lỗi server liên tục: {last_err}"
+                    )
+                log.warning(
+                    "Gemini lỗi server tạm thời (%d), thử lại sau %.0fs (lần %d/%d)",
+                    resp.status_code, backoff, server_retries, max_server_retries,
+                )
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 30)
+                self._idx = (self._idx + 1) % n  # đổi key phòng sự cố cục bộ
+                continue
+
+            # Thành công -> reset bộ đếm 429 của vòng.
+            rate_limited_in_round = 0
+            resp.raise_for_status()
+            data = resp.json()
+            try:
+                return data["candidates"][0]["content"]["parts"][0]["text"]
+            except (KeyError, IndexError):
+                log.warning("Phản hồi Gemini bất thường: %s", data)
+                return "[]"
 
 
 def make_translator(

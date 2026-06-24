@@ -14,10 +14,12 @@ Yêu cầu: ffmpeg phải có sẵn trong PATH.
 from __future__ import annotations
 
 import asyncio
+import re
 import subprocess
 from pathlib import Path
 
 import edge_tts
+from edge_tts.exceptions import NoAudioReceived
 
 from ..transcribe.transcriber import Segment
 from ..utils.logging import get_logger
@@ -39,9 +41,14 @@ class Synthesizer:
         # atempo của ffmpeg chỉ chạy 0.5–2.0 mỗi lần -> giới hạn ở 2.0 cho an toàn.
         self.max_speed = max(1.0, min(max_speed, 2.0))
 
-    async def _tts_one(self, text: str, out: Path) -> None:
-        communicate = edge_tts.Communicate(text, self.voice, rate=self.rate)
+    async def _tts_one(self, text: str, out: Path, voice: str | None = None) -> None:
+        communicate = edge_tts.Communicate(text, voice or self.voice, rate=self.rate)
         await communicate.save(str(out))
+
+    @staticmethod
+    def _speakable(text: str) -> bool:
+        """Có ít nhất 1 chữ/số để đọc không? (chỉ dấu câu/ký hiệu -> bỏ qua)."""
+        return bool(re.search(r"[^\W_]", text, flags=re.UNICODE))
 
     def _duration(self, path: Path) -> float:
         r = subprocess.run(
@@ -89,18 +96,56 @@ class Synthesizer:
             capture_output=True,
         )
 
-    def synthesize(self, segments: list[Segment], total_duration: float) -> Path:
+    def synthesize(
+        self,
+        segments: list[Segment],
+        total_duration: float,
+        voices: list[str] | None = None,
+    ) -> Path:
+        """Tạo audio lồng tiếng. `voices`: giọng cho từng đoạn (cùng độ dài với
+        segments) để đa giọng theo người nói; None = dùng 1 giọng `self.voice`."""
         seg_dir = self.work_dir / "tts_segments"
         seg_dir.mkdir(parents=True, exist_ok=True)
 
+        skipped = 0
+
         async def gen_all() -> None:
+            nonlocal skipped
             for i, seg in enumerate(segments):
-                if not seg.text.strip():
+                text = seg.text.strip()
+                # Bỏ qua đoạn rỗng hoặc chỉ có dấu câu/ký hiệu (edge-tts không đọc được).
+                if not self._speakable(text):
+                    skipped += 1
                     continue
-                await self._tts_one(seg.text, seg_dir / f"raw_{i:04d}.mp3")
+                voice = voices[i] if voices and i < len(voices) else None
+                out = seg_dir / f"raw_{i:04d}.mp3"
+                # Cache: đã tạo rồi (và không rỗng) thì bỏ qua -> chạy lại nhanh.
+                if out.exists() and out.stat().st_size > 0:
+                    continue
+                # Thử lại nhiều lần: edge-tts (dịch vụ free) hay throttle trả
+                # NoAudioReceived tạm thời -> backoff rồi thử lại, hết mới bỏ.
+                last_err: Exception | None = None
+                for attempt in range(5):
+                    try:
+                        await self._tts_one(text, out, voice)
+                        last_err = None
+                        break
+                    except Exception as e:  # noqa: BLE001  (gồm NoAudioReceived)
+                        last_err = e
+                        await asyncio.sleep(1.5 * (attempt + 1))
+                if last_err is not None:
+                    log.warning("Bỏ qua đoạn %d (%r): %s", i, text, last_err)
+                    skipped += 1
+                    # Dọn file rỗng edge-tts để lại, tránh làm hỏng bước ghép.
+                    if out.exists() and out.stat().st_size == 0:
+                        out.unlink()
+                # Nhịp nhẹ giữa các lần gọi để giảm throttle.
+                await asyncio.sleep(0.15)
 
         log.info("Tạo giọng đọc cho %d segment", len(segments))
         asyncio.run(gen_all())
+        if skipped:
+            log.info("Đã bỏ qua %d segment không lồng tiếng được", skipped)
 
         # Đặt từng đoạn theo con trỏ thời gian: không chồng lấn, tự re-sync ở khoảng lặng.
         placed: list[tuple[float, Path]] = []
@@ -108,42 +153,78 @@ class Synthesizer:
         n = len(segments)
         for i, seg in enumerate(segments):
             raw = seg_dir / f"raw_{i:04d}.mp3"
-            if not raw.exists():
+            # Bỏ qua nếu thiếu hoặc file rỗng/hỏng (không có audio).
+            if not raw.exists() or raw.stat().st_size == 0:
                 continue
             dur = self._duration(raw)
+            if dur <= 0:
+                continue
             start = max(seg.start, cursor)
             # Khoảng trống tới mốc bắt đầu (gốc) của đoạn kế tiếp.
             next_start = segments[i + 1].start if i + 1 < n else total_duration
             room = next_start - start
             fitted = seg_dir / f"fit_{i:04d}.mp3"
             final_dur = self._fit_to_room(raw, dur, room, fitted)
+            # Chỉ đưa vào timeline khi file fit thực sự được tạo hợp lệ.
+            if not fitted.exists() or fitted.stat().st_size == 0:
+                log.warning("Không tạo được fit cho đoạn %d, bỏ qua", i)
+                continue
             placed.append((start, fitted))
             cursor = start + final_dur
 
         return self._build_timeline(placed, total_duration, seg_dir)
 
+    # Số đoạn tối đa mỗi lần gọi ffmpeg -> giữ command line dưới giới hạn
+    # Windows (~32k ký tự). Nhiều đoạn hơn sẽ được ghép theo nhiều lô.
+    _BATCH = 50
+
     def _build_timeline(
         self, placed: list[tuple[float, Path]], total: float, seg_dir: Path
     ) -> Path:
-        """Dùng filter adelay để đặt mỗi đoạn vào đúng mốc start rồi amix."""
+        """Đặt mỗi đoạn vào đúng mốc start (adelay) rồi amix.
+
+        Khi có quá nhiều đoạn, ghép theo lô để không vượt giới hạn độ dài lệnh
+        của Windows, sau đó amix các lô lại với nhau.
+        """
         out = self.work_dir / "vi_voice.m4a"
         if not placed:
-            # tạo audio im lặng
             subprocess.run(
                 ["ffmpeg", "-y", "-f", "lavfi", "-i",
-                 f"anullsrc=r=44100:cl=stereo", "-t", str(total), str(out)],
+                 "anullsrc=r=44100:cl=stereo", "-t", str(total), str(out)],
                 capture_output=True,
             )
             return out
 
+        log.info("Ghép timeline lồng tiếng (%d đoạn) -> %s", len(placed), out.name)
+        # 1) Ghép từng lô thành các track dài bằng video (im lặng ở chỗ trống).
+        batch_tracks: list[Path] = []
+        for b, s in enumerate(range(0, len(placed), self._BATCH)):
+            chunk = placed[s : s + self._BATCH]
+            track = seg_dir / f"timeline_{b:03d}.m4a"
+            self._mix_delayed(chunk, total, track)
+            batch_tracks.append(track)
+
+        # 2) Trộn các track lô lại (số lô nhỏ -> 1 lệnh là đủ).
+        if len(batch_tracks) == 1:
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", str(batch_tracks[0]), "-c", "copy", str(out)],
+                capture_output=True,
+            )
+        else:
+            self._mix_tracks(batch_tracks, total, out)
+        return out
+
+    def _mix_delayed(
+        self, placed: list[tuple[float, Path]], total: float, out: Path
+    ) -> None:
+        """1 lô: adelay mỗi đoạn về đúng mốc thời gian rồi amix -> 1 track."""
         inputs: list[str] = []
         filters: list[str] = []
         for idx, (start, path) in enumerate(placed):
             inputs += ["-i", str(path)]
             delay_ms = int(start * 1000)
             filters.append(
-                f"[{idx}:a]adelay={delay_ms}|{delay_ms},"
-                f"aresample=44100[a{idx}]"
+                f"[{idx}:a]adelay={delay_ms}|{delay_ms},aresample=44100[a{idx}]"
             )
         mix_inputs = "".join(f"[a{i}]" for i in range(len(placed)))
         filter_complex = (
@@ -156,6 +237,23 @@ class Synthesizer:
             + ["-filter_complex", filter_complex, "-map", "[mixed]",
                "-t", str(total), str(out)]
         )
-        log.info("Ghép timeline lồng tiếng -> %s", out.name)
-        subprocess.run(cmd, capture_output=True)
-        return out
+        r = subprocess.run(cmd, capture_output=True)
+        if r.returncode != 0:
+            log.warning("Lỗi ghép lô timeline: %s", r.stderr.decode(errors="ignore")[-300:])
+
+    def _mix_tracks(self, tracks: list[Path], total: float, out: Path) -> None:
+        """Trộn nhiều track (đã đúng vị trí) thành 1 (không cần adelay nữa)."""
+        inputs: list[str] = []
+        for t in tracks:
+            inputs += ["-i", str(t)]
+        mix_inputs = "".join(f"[{i}:a]" for i in range(len(tracks)))
+        filter_complex = f"{mix_inputs}amix=inputs={len(tracks)}:normalize=0[mixed]"
+        cmd = (
+            ["ffmpeg", "-y"]
+            + inputs
+            + ["-filter_complex", filter_complex, "-map", "[mixed]",
+               "-t", str(total), str(out)]
+        )
+        r = subprocess.run(cmd, capture_output=True)
+        if r.returncode != 0:
+            log.warning("Lỗi trộn track timeline: %s", r.stderr.decode(errors="ignore")[-300:])

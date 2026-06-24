@@ -3,6 +3,8 @@
 """
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 
 from .audio.separator import VocalRemover
@@ -10,7 +12,7 @@ from .compose.compositor import Compositor
 from .compose.subtitles import write_srt
 from .config import Config
 from .download.downloader import Downloader, VideoItem
-from .transcribe.transcriber import Transcriber
+from .transcribe.transcriber import Segment, Transcriber
 from .translate.translator import make_translator
 from .tts.synthesizer import Synthesizer
 from .upload.facebook import FacebookUploader
@@ -85,16 +87,64 @@ class Pipeline:
             return Path(out) if out else None
         return self._run(item)
 
+    def process_file(self, path: str | Path) -> Path | None:
+        """Xử lý 1 file video CÓ SẴN trên đĩa (bỏ qua bước tải)."""
+        src = Path(path)
+        if not src.exists():
+            raise FileNotFoundError(f"Không tìm thấy file: {src}")
+        # id ổn định từ tên file (bỏ ký tự lạ) -> dùng cho state & tên output.
+        vid = re.sub(r"[^0-9A-Za-z_-]+", "_", src.stem).strip("_") or "local"
+        if self.state.is_processed(vid):
+            log.info("Bỏ qua (đã xử lý): %s", vid)
+            entry = self.state.get(vid) or {}
+            out = entry.get("output")
+            return Path(out) if out else None
+        item = VideoItem(
+            id=vid,
+            url=str(src),
+            title=src.stem,
+            path=src,
+            info={},
+        )
+        return self._run(item)
+
     def _run(self, item: VideoItem) -> Path:
         cfg = self.cfg
         work = cfg.work_dir / item.id
         work.mkdir(parents=True, exist_ok=True)
 
-        # 1) Bóc lời
-        segments, src_lang = self.transcriber.transcribe(item.path)
+        # 1) Bóc lời (có cache để chạy lại không phải transcribe lại)
+        cache = work / "transcript.json"
+        if cache.exists():
+            raw = json.loads(cache.read_text(encoding="utf-8"))
+            segments = [Segment(**s) for s in raw["segments"]]
+            src_lang = raw.get("language", "")
+            log.info("Dùng cache bóc lời: %d segment (%s)", len(segments), src_lang)
+        else:
+            segments, src_lang = self.transcriber.transcribe(item.path)
+            cache.write_text(
+                json.dumps(
+                    {
+                        "language": src_lang,
+                        "segments": [vars(s) for s in segments],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
 
-        # 2) Dịch sang tiếng Việt
-        vi_segments = self.translator.translate_segments(segments)
+        # 2) Dịch sang tiếng Việt (có cache để chạy lại không tốn quota dịch)
+        vi_cache = work / "translated.json"
+        if vi_cache.exists():
+            raw = json.loads(vi_cache.read_text(encoding="utf-8"))
+            vi_segments = [Segment(**s) for s in raw]
+            log.info("Dùng cache bản dịch: %d segment", len(vi_segments))
+        else:
+            vi_segments = self.translator.translate_segments(segments)
+            vi_cache.write_text(
+                json.dumps([vars(s) for s in vi_segments], ensure_ascii=False),
+                encoding="utf-8",
+            )
 
         # 3) Tạo phụ đề .srt
         srt_path = write_srt(vi_segments, work / "vi.srt")
@@ -107,7 +157,30 @@ class Pipeline:
             work_dir=work,
             max_speed=float(cfg.tts.get("max_speed", 2.0)),
         )
-        vi_voice = synth.synthesize(vi_segments, total)
+
+        # 4a) (Tuỳ chọn) đa giọng theo giới tính người nói gốc (nam/nữ).
+        voices = None
+        if cfg.tts.get("gender_voices"):
+            from .audio.gender import detect_genders
+
+            g_cache = work / "genders.json"
+            if g_cache.exists():
+                genders = json.loads(g_cache.read_text(encoding="utf-8"))
+                log.info("Dùng cache giới tính: %d đoạn", len(genders))
+            else:
+                genders = detect_genders(
+                    item.path,
+                    vi_segments,
+                    threshold=float(cfg.tts.get("gender_pitch_threshold", 165)),
+                )
+                g_cache.write_text(json.dumps(genders), encoding="utf-8")
+            vmap = {
+                "female": cfg.tts.get("voice_female", "vi-VN-HoaiMyNeural"),
+                "male": cfg.tts.get("voice_male", "vi-VN-NamMinhNeural"),
+            }
+            voices = [vmap.get(g, vmap["female"]) for g in genders]
+
+        vi_voice = synth.synthesize(vi_segments, total, voices=voices)
 
         # 4b) (Tuỳ chọn) tách nhạc nền sạch để khỏi nghe lẫn giọng gốc
         background = None

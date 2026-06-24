@@ -36,17 +36,25 @@ translate:
   target_language: "Tiếng Việt"
   # Chọn nhà cung cấp: "claude" hoặc "gemini"
   provider: "gemini"
-  # gemini-2.0-flash đang bị giới hạn quota=0 cho key này -> dùng 2.5-flash.
-  # Gợi ý: gemini-2.5-flash (rẻ, nhanh) / gemini-2.5-pro (chất lượng cao)
-  model: "gemini-2.5-flash"
+  # LƯU Ý quota free tier: gemini-2.5-flash chỉ 20 request/NGÀY/key -> rất dễ hết.
+  # gemini-2.5-flash-lite có hạn mức free cao hơn nhiều -> dùng làm mặc định.
+  # Gợi ý: gemini-2.5-flash-lite (free nhiều, nhanh) / gemini-2.5-flash (chất
+  # lượng cao hơn nhưng 20/ngày) / gemini-2.5-pro (tốt nhất, cần trả phí).
+  model: "gemini-2.5-flash-lite"
   # Phong cách dịch: tự nhiên, đời thường, hợp khẩu hình ngắn gọn
   style: "tự nhiên, đời thường, ngắn gọn dễ nghe, phù hợp lồng tiếng video ngắn"
 
 tts:
   # Giọng đọc tiếng Việt của edge-tts.
   # vi-VN-HoaiMyNeural (nữ) | vi-VN-NamMinhNeural (nam)
-  voice: "vi-VN-HoaiMyNeural"
-  rate: "+0%"     # tốc độ đọc, ví dụ "+10%" cho nhanh hơn
+  voice: "vi-VN-HoaiMyNeural"   # giọng mặc định khi TẮT đa giọng
+  rate: "+12%"    # tốc độ đọc cơ bản. Tăng lên "+20%"/"+30%" nếu vẫn thấy chậm
+  # Đa giọng theo giới tính người nói gốc (ước lượng pitch từ audio gốc).
+  # Bật -> nam đọc giọng nam, nữ đọc giọng nữ.
+  gender_voices: true
+  voice_female: "vi-VN-HoaiMyNeural"
+  voice_male: "vi-VN-NamMinhNeural"
+  gender_pitch_threshold: 165   # Hz: F0 < ngưỡng -> nam, >= -> nữ (tinh chỉnh nếu lệch)
   # Tăng tốc tối đa khi giọng Việt dài hơn câu gốc (1.0–2.0). Cao hơn = khớp
   # thời gian tốt hơn nhưng nghe gấp. ffmpeg atempo giới hạn 2.0.
   max_speed: 2.0
@@ -61,9 +69,11 @@ compose:
   # Burn (gắn cứng) phụ đề vào video?
   burn_subtitles: true
   subtitle_font: "Arial"
-  subtitle_fontsize: 18
-  subtitle_color: "&H00FFFFFF"    # trắng (định dạng ASS)
-  subtitle_outline_color: "&H00000000"  # viền đen
+  subtitle_fontsize: 21             # cỡ chữ ĐỒNG NHẤT toàn video
+  subtitle_text_color: "&H00000000"  # chữ ĐEN (định dạng ASS &HAABBGGRR)
+  subtitle_box_color: "&H00FFFFFF"   # Ô NỀN TRẮNG ôm sát chữ (không phải thanh kéo ngang)
+  subtitle_box_padding: 6            # đệm quanh chữ -> ô to/nhỏ
+  subtitle_margin_v: 12              # khoảng cách ô tới đáy (nhỏ -> ô nằm thấp, đè lên chữ gốc)
 
 upload:
   # Bật/tắt từng nền tảng. Để false sẽ chỉ xuất file ra data/output.

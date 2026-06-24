@@ -27,13 +27,23 @@ class Compositor:
 
     def _subtitle_style(self) -> str:
         c = self.cfg
+        # BorderStyle=3 = Ô NỀN ĐẶC ôm sát chữ (không phải thanh kéo ngang màn hình).
+        # Ô màu = OutlineColour (trắng), chữ = PrimaryColour (đen). Outline = đệm
+        # quanh chữ -> ô to/nhỏ. 1 style duy nhất -> font & cỡ chữ ĐỒNG NHẤT.
         return (
             f"FontName={c.get('subtitle_font', 'Arial')},"
-            f"FontSize={c.get('subtitle_fontsize', 18)},"
-            f"PrimaryColour={c.get('subtitle_color', '&H00FFFFFF')},"
-            f"OutlineColour={c.get('subtitle_outline_color', '&H00000000')},"
-            f"BorderStyle=1,Outline=2,Shadow=0,Alignment=2,MarginV=40"
+            f"FontSize={c.get('subtitle_fontsize', 21)},"
+            f"PrimaryColour={c.get('subtitle_text_color', '&H00000000')},"   # chữ đen
+            f"OutlineColour={c.get('subtitle_box_color', '&H00FFFFFF')},"    # ô nền trắng
+            f"BackColour={c.get('subtitle_box_color', '&H00FFFFFF')},"
+            f"BorderStyle=3,Outline={c.get('subtitle_box_padding', 6)},Shadow=0,"
+            f"Alignment=2,MarginV={c.get('subtitle_margin_v', 12)}"
         )
+
+    def _video_filters(self, srt: Path) -> str:
+        """Burn phụ đề Việt với ô nền trắng ôm chữ."""
+        srt_escaped = str(srt).replace("\\", "/").replace(":", "\\:")
+        return f"subtitles='{srt_escaped}':force_style='{self._subtitle_style()}'"
 
     def compose(
         self,
@@ -62,10 +72,7 @@ class Compositor:
         ]
         v_map = "0:v"
         if burn:
-            srt_escaped = str(srt).replace("\\", "/").replace(":", "\\:")
-            filter_parts.append(
-                f"[0:v]subtitles='{srt_escaped}':force_style='{self._subtitle_style()}'[vout]"
-            )
+            filter_parts.append(f"[0:v]{self._video_filters(srt)}[vout]")
             v_map = "[vout]"
 
         filter_complex = ";".join(filter_parts)
