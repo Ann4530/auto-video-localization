@@ -93,12 +93,13 @@ class Pipeline:
         url: str,
         opts: JobOptions,
         progress: ProgressCb | None = None,
+        skip_state: bool = False,
     ) -> Path | None:
         """Xử lý 1 URL video đơn lẻ, trả về đường dẫn video kết quả."""
         progress = progress or _noop
         progress("download", 2)
         item = self.downloader.download(url)
-        if self.state.is_processed(item.id):
+        if not skip_state and self.state.is_processed(item.id):
             log.info("Bỏ qua (đã xử lý): %s", item.id)
             progress("done", 100)
             return self.state.get(item.id).get("output")  # type: ignore
@@ -156,11 +157,19 @@ class Pipeline:
         vi_voice = None
 
         if opts.needs_speech:
-            # 1) Bóc lời  2) Dịch  3) (tuỳ) phụ đề  4) (tuỳ) lồng tiếng
-            progress("transcribe", 10)
-            segments, src_lang = self.transcriber.transcribe(item.path)
-            progress("translate", 45)
-            vi_segments = translator.translate_segments(segments)
+            if opts.segments_path:
+                # Render lại từ bản dịch đã chỉnh sửa -> bỏ qua bóc lời + dịch
+                progress("load-edits", 40)
+                vi_segments = self._load_segments(Path(opts.segments_path))
+                src_lang = "edited"
+            else:
+                # 1) Bóc lời  2) Dịch
+                progress("transcribe", 10)
+                segments, src_lang = self.transcriber.transcribe(item.path)
+                progress("translate", 45)
+                vi_segments = translator.translate_segments(segments)
+            # Luôn lưu bản dịch (để user sửa/render lại sau)
+            self._save_segments(item, vi_segments)
             if do_subtitle:
                 progress("subtitles", 55)
                 srt_path = write_srt(vi_segments, work / "vi.srt")
@@ -180,7 +189,7 @@ class Pipeline:
         overlays = []
         if do_ocr:
             progress("ocr", 80)
-            overlays = self._ocr_overlays(item.path, work, translator)
+            overlays = self._ocr_overlays(item.path, work, translator, opts)
 
         # 5) Ghép video cuối
         progress("compose", 92)
@@ -222,16 +231,43 @@ class Pipeline:
         """Lấy thời lượng video (Compositor nhẹ, dựng tạm)."""
         return Compositor(self.cfg.compose).video_duration(video)
 
-    def _ocr_overlays(self, video: Path, work: Path, translator: BaseTranslator) -> list:
+    def _segments_path(self, item: VideoItem) -> Path:
+        """Đường dẫn JSON lưu bản dịch (cạnh video output, để sửa/render lại)."""
+        return self.cfg.output_dir / f"{item.id}_vi.segments.json"
+
+    def _save_segments(self, item: VideoItem, segments) -> None:
+        import json
+        data = [{"start": s.start, "end": s.end, "text": s.text} for s in segments]
+        self._segments_path(item).write_text(
+            json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8"
+        )
+
+    @staticmethod
+    def _load_segments(path: Path):
+        import json
+
+        from .transcribe.transcriber import Segment
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return [
+            Segment(start=float(d["start"]), end=float(d["end"]),
+                    text=str(d.get("text", "")).strip())
+            for d in data
+            if str(d.get("text", "")).strip()
+        ]
+
+    def _ocr_overlays(self, video: Path, work: Path, translator: BaseTranslator,
+                      opts: JobOptions) -> list:
         """Chạy OCR + dịch chữ trên màn hình, trả danh sách Overlay."""
         from .ocr.screen_text import ScreenTextTranslator
 
         o = self.cfg.ocr
+        # opts.ocr_all_text=True -> dịch MỌI chữ (kể cả Latin); ngược lại theo config
+        only_cjk = o.get("only_cjk", True) and not opts.ocr_all_text
         stt = ScreenTextTranslator(
             translator=translator,
             sample_fps=o.get("sample_fps", 2.0),
             min_score=o.get("min_score", 0.6),
-            only_cjk=o.get("only_cjk", True),
+            only_cjk=only_cjk,
             font_path=o.get("font", "C:/Windows/Fonts/arial.ttf"),
             ocr_max_width=o.get("ocr_max_width", 960),
             scene_diff=o.get("scene_diff", 2.5),

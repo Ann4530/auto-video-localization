@@ -10,6 +10,7 @@ class JobOptionsIn(BaseModel):
     """Tuỳ chọn dịch gửi từ client (web/n8n)."""
     choice: str = Field(default="both", description=f"Một trong {CHOICES}")
     ocr_overlay: bool = False
+    ocr_all_text: bool = False
     target_language: str = "Tiếng Việt"
     voice: str = "vi-VN-HoaiMyNeural"
     rate: str = "+0%"
@@ -51,3 +52,18 @@ class ChannelScanIn(JobOptionsIn):
 class UploadIn(BaseModel):
     targets: list[str] = Field(default_factory=lambda: ["tiktok"])
     caption: str | None = None
+
+
+class SegmentIn(BaseModel):
+    start: float
+    end: float
+    text: str
+
+
+class RerenderIn(BaseModel):
+    """Render lại video với bản dịch đã chỉnh sửa."""
+    segments: list[SegmentIn]
+    choice: str = "both"        # text | voice | both
+    voice: str = "vi-VN-HoaiMyNeural"
+    rate: str = "+0%"
+    keep_original_volume: float | None = None

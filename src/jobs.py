@@ -27,6 +27,10 @@ class JobOptions:
     dub: bool = False              # dịch TIẾNG (lồng tiếng edge-tts)
     subtitles: bool = False        # dịch TEXT lời thoại -> phụ đề
     ocr_overlay: bool = False      # dịch CHỮ trên màn hình (OCR đè)
+    ocr_all_text: bool = False     # True = dịch MỌI chữ (kể cả Latin), False = chỉ CJK
+
+    # --- Render lại từ bản dịch đã sửa (bỏ qua bóc lời + dịch) ---
+    segments_path: str | None = None  # đường dẫn JSON [{start,end,text}] đã chỉnh
 
     # --- Dịch ---
     target_language: str = "Tiếng Việt"

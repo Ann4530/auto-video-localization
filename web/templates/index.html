@@ -77,13 +77,22 @@
         <option>Tiếng Hàn</option>
       </select>
     </label>
-    <label class="field check-inline">
-      <input type="checkbox" name="ocr_overlay" id="ocr_overlay">
-      <span>
-        <b>Dịch chữ trên màn hình</b> (OCR đè chữ)
-        <small class="muted block">Chậm trên CPU — chỉ bật khi video có chữ Trung/Nhật/Hàn cứng.</small>
-      </span>
-    </label>
+    <div class="field check-inline" style="flex-direction:column;align-items:stretch;gap:10px">
+      <label class="ocr-main">
+        <input type="checkbox" name="ocr_overlay" id="ocr_overlay">
+        <span>
+          <b>Dịch chữ trên màn hình</b> (OCR đè chữ)
+          <small class="muted block">Chậm trên CPU — bật khi video có chữ cứng cần dịch.</small>
+        </span>
+      </label>
+      <label class="ocr-sub hidden" id="ocr-sub">
+        <input type="checkbox" name="ocr_all_text" id="ocr_all_text">
+        <span>
+          Dịch <b>mọi chữ</b> phát hiện (kể cả Latin/tiếng Anh)
+          <small class="muted block">Tắt = chỉ dịch chữ Trung/Nhật/Hàn (bỏ qua watermark, @tên, logo).</small>
+        </span>
+      </label>
+    </div>
   </div>
 
   <!-- Tuỳ chọn giọng (chỉ hiện khi có lồng tiếng) -->

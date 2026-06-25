@@ -23,12 +23,14 @@ from src.upload.dispatch import upload_result
 from worker.db import STATE_DONE
 
 from .deps import get_config, list_voices, queue, require_api_key
-from .schemas import (ChannelScanIn, JobCreated, JobStatus, UploadIn,
-                      UrlJobIn)
+from .schemas import (ChannelScanIn, JobCreated, JobStatus, RerenderIn,
+                      UploadIn, UrlJobIn)
 
 HERE = Path(__file__).resolve().parent
 UPLOAD_DIR = ROOT / "data" / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+EDITS_DIR = ROOT / "data" / "edits"
+EDITS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="Video Localization Studio")
 
@@ -47,6 +49,7 @@ def _opts_from_in(data) -> JobOptions:
     return JobOptions.from_request(
         data.choice,
         ocr_overlay=data.ocr_overlay,
+        ocr_all_text=data.ocr_all_text,
         target_language=data.target_language,
         voice=data.voice,
         rate=data.rate,
@@ -80,6 +83,24 @@ def _row_to_status(row: dict) -> JobStatus:
 def _ui_key() -> str:
     """Key để nhúng vào UI cho HTMX gửi kèm (local single-user)."""
     return get_config().env("API_KEY")
+
+
+def _segments_path_for(row: dict) -> Path | None:
+    """Đường dẫn JSON bản dịch của job (suy ra từ output_path)."""
+    if not row.get("output_path"):
+        return None
+    return Path(row["output_path"]).with_suffix(".segments.json")
+
+
+def _read_segments(row: dict) -> list[dict]:
+    import json
+    p = _segments_path_for(row)
+    if not p or not p.exists():
+        return []
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return []
 
 
 # ----------------------------------------------------------------------------
@@ -123,6 +144,7 @@ async def api_job_upload(
     file: UploadFile = File(...),
     choice: str = Form("both"),
     ocr_overlay: bool = Form(False),
+    ocr_all_text: bool = Form(False),
     target_language: str = Form("Tiếng Việt"),
     voice: str = Form("vi-VN-HoaiMyNeural"),
     rate: str = Form("+0%"),
@@ -138,7 +160,8 @@ async def api_job_upload(
         shutil.copyfileobj(file.file, out)
 
     opts = JobOptions.from_request(
-        choice, ocr_overlay=ocr_overlay, target_language=target_language,
+        choice, ocr_overlay=ocr_overlay, ocr_all_text=ocr_all_text,
+        target_language=target_language,
         voice=voice, rate=rate, keep_original_volume=keep_original_volume,
         provider=provider, model=model, style=style,
     )
@@ -181,6 +204,63 @@ async def api_job_result(job_id: str):
     if not path.exists():
         raise HTTPException(404, "File kết quả không tồn tại")
     return FileResponse(str(path), media_type="video/mp4", filename=path.name)
+
+
+# ----------------------------------------------------------------------------
+# API: bản dịch (sửa & render lại)
+# ----------------------------------------------------------------------------
+@app.get("/api/jobs/{job_id}/segments", dependencies=[Depends(require_api_key)])
+async def api_job_segments(job_id: str):
+    row = queue().get(job_id)
+    if not row:
+        raise HTTPException(404, "Không thấy job")
+    return _read_segments(row)
+
+
+@app.post("/api/jobs/{job_id}/rerender", response_model=JobCreated,
+          dependencies=[Depends(require_api_key)])
+async def api_job_rerender(job_id: str, data: RerenderIn):
+    import json
+    row = queue().get(job_id)
+    if not row:
+        raise HTTPException(404, "Không thấy job")
+    if not data.segments:
+        raise HTTPException(400, "Cần ít nhất 1 đoạn dịch")
+
+    # Lưu bản dịch đã sửa
+    new_id = uuid.uuid4().hex
+    seg_file = EDITS_DIR / f"{new_id}.json"
+    seg_file.write_text(
+        json.dumps([s.model_dump() for s in data.segments], ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    # Render lại từ CÙNG nguồn, bỏ qua bóc lời + dịch (segments_path đã đặt).
+    opts = JobOptions.from_request(
+        data.choice,
+        segments_path=str(seg_file),
+        voice=data.voice, rate=data.rate,
+        keep_original_volume=data.keep_original_volume,
+    )
+    jid = queue().enqueue(
+        row["source_type"], row["source_ref"], opts,
+        title=(row.get("title") or "") + " (đã sửa)",
+    )
+    return JobCreated(id=jid)
+
+
+@app.get("/jobs/{job_id}/edit", response_class=HTMLResponse)
+async def page_job_edit(request: Request, job_id: str):
+    row = queue().get(job_id)
+    if not row:
+        raise HTTPException(404, "Không thấy job")
+    segments = _read_segments(row)
+    voices = await list_voices()
+    return templates.TemplateResponse(
+        request, "edit.html",
+        {"job": _row_to_status(row), "segments": segments,
+         "voices": voices, "api_key": _ui_key()},
+    )
 
 
 # ----------------------------------------------------------------------------

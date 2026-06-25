@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title %}Sửa bản dịch · {{ job.title }}{% endblock %}
+{% block nav_jobs %}active{% endblock %}
+
+{% block content %}
+<header class="page-head">
+  <a href="/jobs/{{ job.id }}" class="back">← Quay lại job</a>
+  <h1>Sửa bản dịch</h1>
+  <p class="muted">Chỉnh chữ, thời gian, thêm/xoá đoạn → render lại video mới (không bóc lời/dịch lại).</p>
+</header>
+
+{% if not segments %}
+<div class="card"><div class="empty">
+  <div class="empty-ico">📝</div>
+  <p>Job này chưa có bản dịch lời thoại để sửa (có thể chỉ chạy OCR).</p>
+</div></div>
+{% else %}
+
+<div class="grid-edit">
+  <div class="card">
+    <div class="seg-head">
+      <h2>Các đoạn dịch (<span id="seg-count">{{ segments|length }}</span>)</h2>
+      <button class="btn btn-sm" id="add-seg">＋ Thêm đoạn</button>
+    </div>
+    <div class="seg-list" id="seg-list">
+      {% for s in segments %}
+      <div class="seg-item" data-row>
+        <div class="seg-time">
+          <input type="number" step="0.01" class="t-start" value="{{ '%.2f'|format(s.start) }}" title="Bắt đầu (giây)">
+          <span>→</span>
+          <input type="number" step="0.01" class="t-end" value="{{ '%.2f'|format(s.end) }}" title="Kết thúc (giây)">
+          <button class="del-seg" title="Xoá đoạn">✕</button>
+        </div>
+        <textarea class="t-text" rows="2">{{ s.text }}</textarea>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <aside class="card render-panel">
+    <h2>Render lại</h2>
+    <label class="field">
+      <span class="field-label">Chế độ</span>
+      <select id="r-choice">
+        <option value="both">Lồng tiếng + phụ đề</option>
+        <option value="voice">Chỉ lồng tiếng</option>
+        <option value="text">Chỉ phụ đề</option>
+      </select>
+    </label>
+    <label class="field" id="r-voice-field">
+      <span class="field-label">Giọng đọc</span>
+      <input type="text" id="r-voice-search" placeholder="Lọc giọng…" style="margin-bottom:6px">
+      <select id="r-voice">
+        {% for v in voices %}
+        <option value="{{ v.ShortName }}" {% if v.ShortName == 'vi-VN-HoaiMyNeural' %}selected{% endif %}>{{ v.ShortName }} · {{ v.Gender }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button class="btn btn-primary" id="rerender-btn" style="width:100%;justify-content:center">🚀 Render lại</button>
+    <p class="form-msg" id="r-msg"></p>
+    <p class="muted" style="font-size:12px">Tạo job mới, giữ nguyên video gốc, chỉ áp bản dịch đã sửa.</p>
+  </aside>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var JOB = "{{ job.id }}";
+  function authHeaders(){ try { return JSON.parse(document.body.getAttribute("hx-headers")); } catch(e){ return {}; } }
+  var list = document.getElementById("seg-list");
+  if (!list) return;
+
+  function rowTemplate(start, end, text) {
+    var d = document.createElement("div");
+    d.className = "seg-item"; d.setAttribute("data-row", "");
+    d.innerHTML =
+      '<div class="seg-time">' +
+        '<input type="number" step="0.01" class="t-start" value="' + start + '">' +
+        '<span>→</span>' +
+        '<input type="number" step="0.01" class="t-end" value="' + end + '">' +
+        '<button class="del-seg" title="Xoá">✕</button>' +
+      '</div>' +
+      '<textarea class="t-text" rows="2"></textarea>';
+    d.querySelector(".t-text").value = text || "";
+    return d;
+  }
+  function refreshCount(){ document.getElementById("seg-count").textContent = list.querySelectorAll("[data-row]").length; }
+
+  list.addEventListener("click", function (e) {
+    if (e.target.classList.contains("del-seg")) {
+      e.preventDefault(); e.target.closest("[data-row]").remove(); refreshCount();
+    }
+  });
+  document.getElementById("add-seg").addEventListener("click", function () {
+    var rows = list.querySelectorAll("[data-row]");
+    var last = rows[rows.length - 1];
+    var start = last ? parseFloat(last.querySelector(".t-end").value) || 0 : 0;
+    list.appendChild(rowTemplate(start.toFixed(2), (start + 2).toFixed(2), ""));
+    refreshCount();
+  });
+
+  // lọc giọng
+  var vs = document.getElementById("r-voice-search"), vsel = document.getElementById("r-voice");
+  if (vs) vs.addEventListener("input", function () {
+    var q = vs.value.toLowerCase();
+    Array.prototype.forEach.call(vsel.options, function (o) { o.hidden = q && o.value.toLowerCase().indexOf(q) < 0; });
+  });
+  // ẩn giọng nếu chỉ phụ đề
+  var rc = document.getElementById("r-choice"), vf = document.getElementById("r-voice-field");
+  rc.addEventListener("change", function () { vf.style.display = rc.value === "text" ? "none" : ""; });
+
+  // submit render lại
+  var btn = document.getElementById("rerender-btn"), msg = document.getElementById("r-msg");
+  btn.addEventListener("click", function () {
+    var segs = [];
+    list.querySelectorAll("[data-row]").forEach(function (r) {
+      var text = r.querySelector(".t-text").value.trim();
+      if (!text) return;
+      segs.push({
+        start: parseFloat(r.querySelector(".t-start").value) || 0,
+        end: parseFloat(r.querySelector(".t-end").value) || 0,
+        text: text
+      });
+    });
+    if (!segs.length) { msg.textContent = "Cần ít nhất 1 đoạn."; msg.className = "form-msg err"; return; }
+    btn.disabled = true; msg.textContent = "Đang tạo job render…"; msg.className = "form-msg";
+    fetch("/api/jobs/" + JOB + "/rerender", {
+      method: "POST",
+      headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
+      body: JSON.stringify({ segments: segs, choice: rc.value, voice: vsel.value })
+    }).then(function (r) {
+      if (!r.ok) return r.text().then(function (t) { throw new Error(t); });
+      return r.json();
+    }).then(function (d) { window.location.href = "/jobs/" + d.id; })
+      .catch(function (e) { msg.textContent = "Lỗi: " + e.message; msg.className = "form-msg err"; btn.disabled = false; });
+  });
+})();
+</script>
+{% endblock %}

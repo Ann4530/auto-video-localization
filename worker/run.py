@@ -34,7 +34,10 @@ def run_one(pipeline: Pipeline, queue: Queue, row: dict) -> None:
     log.info("Bắt đầu job %s (%s: %s)", job_id, row["source_type"], row["source_ref"])
     try:
         if row["source_type"] == "url":
-            out = pipeline.process_url(row["source_ref"], opts, progress=progress)
+            out = pipeline.process_url(
+                row["source_ref"], opts, progress=progress,
+                skip_state=bool(opts.segments_path),
+            )
         else:
             out = pipeline.process_file(
                 row["source_ref"], opts, title=row.get("title"),

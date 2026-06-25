@@ -65,6 +65,16 @@
     });
   }
 
+  // ---- Hiện/ẩn "dịch mọi chữ" theo checkbox OCR ----
+  var ocrMain = document.getElementById("ocr_overlay");
+  var ocrSub = document.getElementById("ocr-sub");
+  if (ocrMain && ocrSub) {
+    ocrMain.addEventListener("change", function () {
+      ocrSub.classList.toggle("hidden", !ocrMain.checked);
+      if (!ocrMain.checked) document.getElementById("ocr_all_text").checked = false;
+    });
+  }
+
   // ---- Hiện/ẩn tuỳ chọn giọng theo choice ----
   var voiceOpts = document.getElementById("voice-opts");
   function syncVoiceOpts() {
@@ -122,6 +132,7 @@
     var common = {
       choice: choice,
       ocr_overlay: document.getElementById("ocr_overlay").checked,
+      ocr_all_text: document.getElementById("ocr_all_text").checked,
       target_language: form.target_language.value,
       voice: voiceSel ? voiceSel.value : "vi-VN-HoaiMyNeural",
       rate: rateHidden ? rateHidden.value : "+0%",
