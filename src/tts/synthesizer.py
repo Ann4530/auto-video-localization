@@ -34,9 +34,25 @@ class Synthesizer:
         self.rate = rate
         self.work_dir = work_dir or Path(".")
 
-    async def _tts_one(self, text: str, out: Path) -> None:
-        communicate = edge_tts.Communicate(text, self.voice, rate=self.rate)
-        await communicate.save(str(out))
+    async def _tts_one(self, text: str, out: Path, retries: int = 3) -> bool:
+        """Tạo TTS cho 1 đoạn, có retry. Trả True nếu thành công.
+
+        edge-tts đôi khi trả 'NoAudioReceived' (chập chờn / giới hạn máy chủ MS,
+        hoặc giọng không đọc được text) -> thử lại, vẫn lỗi thì bỏ qua đoạn này
+        (coi như im lặng) để KHÔNG làm hỏng cả job."""
+        delay = 1.5
+        for attempt in range(retries):
+            try:
+                communicate = edge_tts.Communicate(text, self.voice, rate=self.rate)
+                await communicate.save(str(out))
+                if out.exists() and out.stat().st_size > 0:
+                    return True
+            except Exception as e:  # noqa: BLE001
+                log.warning("TTS đoạn lỗi (lần %d): %s", attempt + 1, e)
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 8)
+        log.error("Bỏ qua đoạn không tạo được giọng: %.40s", text)
+        return False
 
     def _duration(self, path: Path) -> float:
         r = subprocess.run(
@@ -77,6 +93,7 @@ class Synthesizer:
                 if not seg.text.strip():
                     continue
                 await self._tts_one(seg.text, seg_dir / f"raw_{i:04d}.mp3")
+            # (lỗi từng đoạn đã được nuốt trong _tts_one -> không raise ở đây)
 
         log.info("Tạo giọng đọc cho %d segment", len(segments))
         asyncio.run(gen_all())

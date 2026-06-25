@@ -197,6 +197,17 @@ class GeminiTranslator(BaseTranslator):
         raise last_429 if last_429 is not None else RuntimeError("Gemini 429 mọi key")
 
 
+class EchoTranslator(BaseTranslator):
+    """Không dịch — trả nguyên văn. Dùng để TEST không cần API key, hoặc khi
+    muốn phụ đề/lồng tiếng CÙNG ngôn ngữ gốc (vd bóc lời để làm caption)."""
+
+    def translate_texts(self, texts: list[str]) -> list[str]:
+        return list(texts)
+
+    def translate_segments(self, segments: list[Segment]) -> list[Segment]:
+        return [Segment(start=s.start, end=s.end, text=s.text) for s in segments]
+
+
 def make_translator(
     provider: str,
     *,
@@ -208,6 +219,8 @@ def make_translator(
 ) -> BaseTranslator:
     """Factory: chọn translator theo provider trong config."""
     provider = (provider or "claude").lower()
+    if provider == "echo":
+        return EchoTranslator(target_language=target_language, style=style)
     if provider == "gemini":
         return GeminiTranslator(
             api_key=gemini_key,
@@ -222,7 +235,7 @@ def make_translator(
             target_language=target_language,
             style=style,
         )
-    raise ValueError(f"provider không hỗ trợ: {provider} (dùng 'claude' hoặc 'gemini')")
+    raise ValueError(f"provider không hỗ trợ: {provider} (dùng 'claude' | 'gemini' | 'echo')")
 
 
 def _strip_code_fence(text: str) -> str:

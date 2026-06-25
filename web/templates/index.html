@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Dịch video · Localize Studio{% endblock %}
+{% block nav_new %}active{% endblock %}
+
+{% block content %}
+<header class="page-head">
+  <h1>Dịch & lồng tiếng video</h1>
+  <p class="muted">Upload file hoặc dán link video ngắn (TikTok, Douyin, Instagram…). Chọn dịch phụ đề, lồng tiếng, hay cả hai.</p>
+</header>
+
+<form id="job-form" class="card form" autocomplete="off">
+  <!-- Nguồn -->
+  <div class="seg" role="tablist">
+    <button type="button" class="seg-btn active" data-src="file">⬆ Upload file</button>
+    <button type="button" class="seg-btn" data-src="url">🔗 Dán link</button>
+  </div>
+
+  <div class="src-panel" data-panel="file">
+    <label class="dropzone" id="dropzone">
+      <input type="file" id="file" name="file" accept="video/*" hidden>
+      <div class="dz-inner">
+        <div class="dz-ico">🎞️</div>
+        <div class="dz-text"><b>Kéo thả</b> video vào đây, hoặc bấm để chọn</div>
+        <div class="dz-name muted" id="dz-name">Chưa chọn file</div>
+      </div>
+    </label>
+  </div>
+
+  <div class="src-panel hidden" data-panel="url">
+    <label class="field">
+      <span class="field-label">Link video</span>
+      <input type="url" id="url" name="url" placeholder="https://www.tiktok.com/@user/video/123…">
+      <small class="muted">Douyin không tải tự động được (chặn a_bogus) — hãy tải file rồi dùng tab Upload.</small>
+    </label>
+  </div>
+
+  <!-- Chế độ dịch -->
+  <div class="field">
+    <span class="field-label">Bạn muốn dịch gì?</span>
+    <div class="choice-grid">
+      <label class="choice">
+        <input type="radio" name="choice" value="text">
+        <div class="choice-card">
+          <div class="choice-ico">💬</div>
+          <div class="choice-title">Phụ đề</div>
+          <div class="choice-desc">Dịch lời thoại → phụ đề, giữ tiếng gốc</div>
+        </div>
+      </label>
+      <label class="choice">
+        <input type="radio" name="choice" value="voice">
+        <div class="choice-card">
+          <div class="choice-ico">🎙️</div>
+          <div class="choice-title">Lồng tiếng</div>
+          <div class="choice-desc">Đọc bản dịch bằng giọng AI, không phụ đề</div>
+        </div>
+      </label>
+      <label class="choice">
+        <input type="radio" name="choice" value="both" checked>
+        <div class="choice-card">
+          <div class="choice-ico">✨</div>
+          <div class="choice-title">Cả hai</div>
+          <div class="choice-desc">Lồng tiếng + phụ đề</div>
+        </div>
+      </label>
+    </div>
+  </div>
+
+  <!-- Ngôn ngữ đích -->
+  <div class="row">
+    <label class="field">
+      <span class="field-label">Ngôn ngữ đích</span>
+      <select name="target_language">
+        <option>Tiếng Việt</option>
+        <option>Tiếng Anh</option>
+        <option>Tiếng Trung</option>
+        <option>Tiếng Nhật</option>
+        <option>Tiếng Hàn</option>
+      </select>
+    </label>
+    <label class="field check-inline">
+      <input type="checkbox" name="ocr_overlay" id="ocr_overlay">
+      <span>
+        <b>Dịch chữ trên màn hình</b> (OCR đè chữ)
+        <small class="muted block">Chậm trên CPU — chỉ bật khi video có chữ Trung/Nhật/Hàn cứng.</small>
+      </span>
+    </label>
+  </div>
+
+  <!-- Tuỳ chọn giọng (chỉ hiện khi có lồng tiếng) -->
+  <fieldset class="voice-opts" id="voice-opts">
+    <legend>Tuỳ chọn giọng đọc</legend>
+    <div class="row">
+      <label class="field">
+        <span class="field-label">Giọng</span>
+        <div class="voice-filter">
+          <input type="text" id="voice-search" placeholder="Lọc giọng (vd: vi, en, female)…">
+        </div>
+        <select name="voice" id="voice" size="1">
+          {% for v in voices %}
+          <option value="{{ v.ShortName }}" data-locale="{{ v.Locale }}" data-gender="{{ v.Gender }}"
+            {% if v.ShortName == 'vi-VN-HoaiMyNeural' %}selected{% endif %}>
+            {{ v.ShortName }} · {{ v.Gender }}
+          </option>
+          {% endfor %}
+        </select>
+        <small class="muted" id="voice-count">{{ voices|length }} giọng</small>
+      </label>
+      <label class="field">
+        <span class="field-label">Tốc độ đọc: <b id="rate-val">+0%</b></span>
+        <input type="range" name="rate_slider" id="rate-slider" min="-50" max="50" step="5" value="0">
+        <input type="hidden" name="rate" id="rate" value="+0%">
+        <span class="field-label" style="margin-top:14px">Giữ nhạc nền gốc: <b id="kov-val">0.12</b></span>
+        <input type="range" name="keep_original_volume" id="kov" min="0" max="1" step="0.02" value="0.12">
+      </label>
+    </div>
+  </fieldset>
+
+  <div class="actions">
+    <button type="submit" class="btn btn-primary" id="submit-btn">
+      <span class="btn-label">🚀 Bắt đầu dịch</span>
+    </button>
+    <span class="form-msg" id="form-msg"></span>
+  </div>
+</form>
+{% endblock %}

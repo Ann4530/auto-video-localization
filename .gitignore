@@ -4,8 +4,13 @@ __pycache__/
 data/downloads/
 data/work/
 data/output/
+data/uploads/
 data/state.json
 data/douyin_cookies.txt
+data/jobs.db
+data/jobs.db-wal
+data/jobs.db-shm
+data/n8n/
 .venv/
 .venv-1/
 venv/

@@ -32,7 +32,13 @@ download:
   cookies_from_browser: null
 
 transcribe:
-  # Model whisper: tiny / base / small / medium / large-v3
+  # Backend bóc lời:
+  #   whisper : faster-whisper chạy LOCAL (offline, nhưng ngốn RAM)
+  #   gemini  : đẩy audio lên Gemini API (KHÔNG tốn RAM, ~1500 lượt free/ngày,
+  #             dùng chung GEMINI_API_KEY với bước dịch). Khuyến nghị khi máy yếu.
+  provider: "whisper"
+  gemini_model: "gemini-2.5-flash"   # model dùng cho provider=gemini
+  # Model whisper (khi provider=whisper): tiny / base / small / medium / large-v3
   # large-v3 chính xác nhất, base/small đủ dùng và nhanh
   model: "base"
   # Để trống = tự nhận diện ngôn ngữ nguồn. Đặt "zh" nếu chắc chắn là tiếng Trung
@@ -43,7 +49,9 @@ transcribe:
 
 translate:
   target_language: "Tiếng Việt"
-  # Chọn nhà cung cấp: "claude" hoặc "gemini"
+  # Chọn nhà cung cấp: "gemini" | "claude" | "echo"
+  #   echo = không dịch, giữ nguyên text (để TEST không cần key, hoặc làm phụ
+  #          đề/lồng tiếng CÙNG ngôn ngữ gốc).
   provider: "gemini"
   # gemini-2.0-flash đang bị giới hạn quota=0 cho key này -> dùng 2.5-flash.
   # Gợi ý: gemini-2.5-flash (rẻ, nhanh) / gemini-2.5-pro (chất lượng cao)

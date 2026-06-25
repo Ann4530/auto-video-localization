@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Hàng đợi · Localize Studio{% endblock %}
+{% block nav_jobs %}active{% endblock %}
+
+{% block content %}
+<header class="page-head">
+  <h1>Hàng đợi xử lý</h1>
+  <p class="muted">Theo dõi tiến trình các video đang dịch.</p>
+</header>
+
+<div class="card" hx-get="/jobs" hx-trigger="every 4s" hx-select="#jobs-table" hx-target="#jobs-table" hx-swap="outerHTML">
+  <div id="jobs-table">
+    {% if not jobs %}
+      <div class="empty">
+        <div class="empty-ico">📭</div>
+        <p>Chưa có job nào. <a href="/">Tạo job dịch đầu tiên →</a></p>
+      </div>
+    {% else %}
+    <table class="table">
+      <thead>
+        <tr><th>Tiêu đề</th><th>Nguồn</th><th>Trạng thái</th><th>Tiến trình</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for j in jobs %}
+        <tr>
+          <td class="td-title"><a href="/jobs/{{ j.id }}">{{ j.title or j.id[:8] }}</a></td>
+          <td><span class="tag">{{ j.source_type }}</span></td>
+          <td><span class="badge badge-{{ j.state }}">{{ j.state }}</span></td>
+          <td class="td-prog">
+            <div class="mini-bar"><span style="width: {{ j.percent }}%"></span></div>
+            <small class="muted">{{ j.stage or '' }} · {{ j.percent }}%</small>
+          </td>
+          <td class="td-actions">
+            {% if j.state == 'done' and j.output_url %}
+              <a class="btn btn-sm" href="{{ j.output_url }}" target="_blank">Xem</a>
+            {% else %}
+              <a class="btn btn-sm btn-ghost" href="/jobs/{{ j.id }}">Chi tiết</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,25 @@
+# n8n để tự động hoá: quét kênh -> gọi API dịch -> đăng.
+# API + worker chạy NATIVE trên host (cần ffmpeg/whisper), chỉ n8n trong Docker.
+# Chạy:  docker compose up -d
+# Mở:    http://localhost:5678  (đăng nhập bằng N8N_BASIC_AUTH_USER/PASS trong .env)
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: localize_n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_USER:-admin}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASS:-changeme}
+      - GENERIC_TIMEZONE=Asia/Ho_Chi_Minh
+      # Base URL của API (host máy) mà n8n sẽ gọi.
+      - VIDEOAPP_BASE=http://host.docker.internal:8000
+      - VIDEOAPP_API_KEY=${API_KEY:-}
+    volumes:
+      - ./data/n8n:/home/node/.n8n
+    extra_hosts:
+      # Cho container gọi được API chạy trên host (Windows/Mac đã có sẵn,
+      # Linux cần dòng này).
+      - "host.docker.internal:host-gateway"

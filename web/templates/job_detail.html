@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Job {{ job.id[:8] }} · Localize Studio{% endblock %}
+{% block nav_jobs %}active{% endblock %}
+
+{% block content %}
+<header class="page-head">
+  <a href="/jobs" class="back">← Hàng đợi</a>
+  <h1>{{ job.title or job.id[:8] }}</h1>
+  <p class="muted">{{ job.source_type }} · job <code>{{ job.id }}</code></p>
+</header>
+
+{# Khối status tự refresh khi chưa xong; dừng poll khi done/failed #}
+<div id="status"
+     {% if job.state in ['queued','running'] %}
+     hx-get="/jobs/{{ job.id }}" hx-trigger="every 2s" hx-select="#status" hx-target="#status" hx-swap="outerHTML"
+     {% endif %}>
+
+  <div class="card status-card">
+    <div class="status-row">
+      <span class="badge badge-{{ job.state }} big">{{ job.state }}</span>
+      <span class="stage">{{ job.stage or '—' }}</span>
+    </div>
+    <div class="bar"><span style="width: {{ job.percent }}%"></span></div>
+    <div class="bar-pct">{{ job.percent }}%</div>
+
+    {% if job.state == 'failed' %}
+      <div class="alert alert-error">
+        <b>Job lỗi:</b>
+        <pre>{{ job.error }}</pre>
+      </div>
+    {% endif %}
+  </div>
+
+  {% if job.state == 'done' and job.output_url %}
+  <div class="card result-card">
+    <h2>Kết quả</h2>
+    <video src="{{ job.output_url }}" controls playsinline class="result-video"></video>
+    <div class="result-actions">
+      <a class="btn btn-primary" href="{{ job.output_url }}" download>⬇ Tải video</a>
+      <a class="btn btn-ghost" href="/">+ Dịch video khác</a>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Localize Studio{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <script src="/static/htmx.min.js" defer></script>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>">
+</head>
+<body hx-headers='{"X-API-Key": "{{ api_key }}"}'>
+  <div class="app">
+    <aside class="sidebar">
+      <a class="brand" href="/">
+        <span class="brand-logo">🎬</span>
+        <span class="brand-name">Localize<b>Studio</b></span>
+      </a>
+      <nav class="nav">
+        <a href="/" class="nav-item {% block nav_new %}{% endblock %}">
+          <span class="nav-ico">✦</span> Dịch video
+        </a>
+        <a href="/jobs" class="nav-item {% block nav_jobs %}{% endblock %}">
+          <span class="nav-ico">≡</span> Hàng đợi
+        </a>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="health" id="health">
+          <span class="dot"></span> đang kết nối…
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+  <script src="/static/app.js" defer></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

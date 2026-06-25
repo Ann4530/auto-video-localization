@@ -10,4 +10,10 @@ python-dotenv>=1.0.0
 pyyaml>=6.0
 requests>=2.31.0
 
+# Web app (API + UI). Job queue dùng sqlite3 trong thư viện chuẩn (không cần thêm).
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+jinja2>=3.1.0
+python-multipart>=0.0.9   # nhận upload file (multipart/form-data)
+
 # Uploading: Facebook / Instagram use Graph API via requests; TikTok uses its own API

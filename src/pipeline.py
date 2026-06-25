@@ -1,26 +1,37 @@
 """Điều phối toàn bộ quy trình cho 1 video:
    tải -> bóc lời -> dịch -> phụ đề -> lồng tiếng -> ghép -> đăng.
+
+Mỗi job truyền vào một `JobOptions` (xem src/jobs.py) để tuỳ biến: dịch text/
+tiếng/cả 2, chọn giọng, ngôn ngữ đích... Field nào để None sẽ rơi về mặc định
+trong config.yaml.
 """
 from __future__ import annotations
 
 import hashlib
 import re
 from pathlib import Path
+from typing import Callable
 
 from .compose.compositor import Compositor
 from .compose.subtitles import write_srt
 from .config import Config
 from .download.downloader import Downloader, VideoItem
-from .transcribe.transcriber import Transcriber
-from .translate.translator import make_translator
+from .jobs import JobOptions
+from .transcribe.transcriber import BaseTranscriber, make_transcriber
+from .translate.translator import BaseTranslator, make_translator
 from .tts.synthesizer import Synthesizer
-from .upload.facebook import FacebookUploader
-from .upload.instagram import InstagramUploader
-from .upload.tiktok import TikTokUploader
+from .upload.dispatch import upload_result
 from .utils.logging import get_logger
 from .utils.state import State
 
 log = get_logger("pipeline")
+
+# progress(stage_name, percent 0..100)
+ProgressCb = Callable[[str, int], None]
+
+
+def _noop(stage: str, percent: int) -> None:  # callback mặc định
+    pass
 
 
 class Pipeline:
@@ -35,56 +46,78 @@ class Pipeline:
             cookies_from_browser=cfg.download.get("cookies_from_browser"),
         )
         # Transcriber nạp model nặng -> tạo lười (lazy) khi cần
-        self._transcriber: Transcriber | None = None
-
-        self.translator = make_translator(
-            provider=cfg.translate.get("provider", "claude"),
-            anthropic_key=cfg.env("ANTHROPIC_API_KEY"),
-            gemini_key=cfg.env("GEMINI_API_KEY"),
-            model=cfg.translate.get("model", ""),
-            target_language=cfg.translate.get("target_language", "Tiếng Việt"),
-            style=cfg.translate.get("style", "tự nhiên"),
-        )
-        self.compositor = Compositor(
-            cfg.compose, keep_original_volume=cfg.tts.get("keep_original_volume", 0.12)
-        )
-        self.mode = cfg.raw.get("mode", "voice_transcript")
+        self._transcriber: BaseTranscriber | None = None
+        # Cache translator theo (provider, model, target_language, style) để
+        # job lặp cùng cấu hình dịch dùng lại 1 client.
+        self._translators: dict[tuple, BaseTranslator] = {}
 
     @property
-    def transcriber(self) -> Transcriber:
+    def transcriber(self) -> BaseTranscriber:
         if self._transcriber is None:
             t = self.cfg.transcribe
-            self._transcriber = Transcriber(
-                model=t.get("model", "small"),
+            self._transcriber = make_transcriber(
+                provider=t.get("provider", "whisper"),
+                gemini_key=self.cfg.env("GEMINI_API_KEY"),
+                model=t.get("gemini_model", "gemini-2.5-flash"),
                 language=t.get("language"),
+                whisper_model=t.get("model", "base"),
                 device=t.get("device", "auto"),
                 compute_type=t.get("compute_type", "int8"),
                 cpu_threads=t.get("cpu_threads", 4),
             )
         return self._transcriber
 
+    def _get_translator(self, opts: JobOptions) -> BaseTranslator:
+        cfg = self.cfg
+        key = (
+            opts.provider or cfg.translate.get("provider", "gemini"),
+            opts.model or cfg.translate.get("model", ""),
+            opts.target_language or cfg.translate.get("target_language", "Tiếng Việt"),
+            opts.style or cfg.translate.get("style", "tự nhiên"),
+        )
+        if key not in self._translators:
+            self._translators[key] = make_translator(
+                provider=key[0],
+                anthropic_key=cfg.env("ANTHROPIC_API_KEY"),
+                gemini_key=cfg.env("GEMINI_API_KEY"),
+                model=key[1],
+                target_language=key[2],
+                style=key[3],
+            )
+        return self._translators[key]
+
     # ---------------------------------------------------------------
 
-    def process_url(self, url: str, mode: str | None = None) -> Path | None:
+    def process_url(
+        self,
+        url: str,
+        opts: JobOptions,
+        progress: ProgressCb | None = None,
+    ) -> Path | None:
         """Xử lý 1 URL video đơn lẻ, trả về đường dẫn video kết quả."""
-        if mode:
-            self.mode = mode
-        # Lấy id sớm để check trùng (tải nhẹ metadata)
+        progress = progress or _noop
+        progress("download", 2)
         item = self.downloader.download(url)
         if self.state.is_processed(item.id):
             log.info("Bỏ qua (đã xử lý): %s", item.id)
+            progress("done", 100)
             return self.state.get(item.id).get("output")  # type: ignore
-        return self._run(item)
+        return self._run(item, opts, progress)
 
-    def process_file(self, file_path: str, title: str | None = None,
-                     mode: str | None = None) -> Path | None:
+    def process_file(
+        self,
+        file_path: str,
+        opts: JobOptions,
+        title: str | None = None,
+        progress: ProgressCb | None = None,
+        skip_state: bool = False,
+    ) -> Path | None:
         """Xử lý 1 file video CÓ SẴN trên máy (bỏ qua bước tải).
 
-        Dùng cho nguồn khó tải tự động như Douyin: bạn tự tải file về rồi
-        đưa đường dẫn vào đây.
+        Dùng cho nguồn khó tải tự động như Douyin, và cho upload thủ công từ
+        web (skip_state=True để cho phép xử lý lại cùng 1 file).
         """
-        if mode:
-            self.mode = mode
+        progress = progress or _noop
         path = Path(file_path)
         if not path.exists():
             raise FileNotFoundError(f"Không thấy file: {path}")
@@ -100,52 +133,65 @@ class Pipeline:
             path=path,
             info={},
         )
-        if self.state.is_processed(item.id):
+        if not skip_state and self.state.is_processed(item.id):
             log.info("Bỏ qua (đã xử lý): %s", item.id)
+            progress("done", 100)
             return self.state.get(item.id).get("output")  # type: ignore
-        return self._run(item)
+        return self._run(item, opts, progress)
 
-    def _run(self, item: VideoItem) -> Path:
+    def _run(self, item: VideoItem, opts: JobOptions, progress: ProgressCb) -> Path:
         cfg = self.cfg
         work = cfg.work_dir / item.id
         work.mkdir(parents=True, exist_ok=True)
 
-        mode = self.mode
-        # voice_transcript: lồng tiếng + phụ đề
-        # voice_only:       lồng tiếng, không phụ đề
-        # screen_only:      chỉ đè chữ màn hình, giữ audio gốc
-        do_voice = mode in ("voice_transcript", "voice_only")
-        do_subtitle = mode == "voice_transcript"
-        do_ocr = cfg.ocr.get("enabled", False) or mode == "screen_only"
-        log.info("Chế độ: %s (lồng tiếng=%s, phụ đề=%s, OCR=%s)",
-                 mode, do_voice, do_subtitle, do_ocr)
+        do_voice = opts.dub
+        do_subtitle = opts.subtitles
+        do_ocr = opts.ocr_overlay
+        log.info("Job: lồng tiếng=%s, phụ đề=%s, OCR=%s, ngôn ngữ=%s",
+                 do_voice, do_subtitle, do_ocr, opts.target_language)
 
+        translator = self._get_translator(opts)
         src_lang = ""
         srt_path = None
         vi_voice = None
 
-        if do_voice:
-            # 1) Bóc lời  2) Dịch  3) (tuỳ) phụ đề  4) Lồng tiếng
+        if opts.needs_speech:
+            # 1) Bóc lời  2) Dịch  3) (tuỳ) phụ đề  4) (tuỳ) lồng tiếng
+            progress("transcribe", 10)
             segments, src_lang = self.transcriber.transcribe(item.path)
-            vi_segments = self.translator.translate_segments(segments)
+            progress("translate", 45)
+            vi_segments = translator.translate_segments(segments)
             if do_subtitle:
+                progress("subtitles", 55)
                 srt_path = write_srt(vi_segments, work / "vi.srt")
                 # xuất kèm transcript ra thư mục output cho tiện
                 write_srt(vi_segments, cfg.output_dir / f"{item.id}_vi.srt")
-            total = self.compositor.video_duration(item.path)
-            synth = Synthesizer(
-                voice=cfg.tts.get("voice", "vi-VN-HoaiMyNeural"),
-                rate=cfg.tts.get("rate", "+0%"),
-                work_dir=work,
-            )
-            vi_voice = synth.synthesize(vi_segments, total)
+            if do_voice:
+                progress("dubbing", 65)
+                total = self.compositor_duration(item.path)
+                synth = Synthesizer(
+                    voice=opts.voice or cfg.tts.get("voice", "vi-VN-HoaiMyNeural"),
+                    rate=opts.rate or cfg.tts.get("rate", "+0%"),
+                    work_dir=work,
+                )
+                vi_voice = synth.synthesize(vi_segments, total)
 
         # 4b) OCR chữ trên màn hình -> đè tiếng Việt
-        overlays = self._ocr_overlays(item.path, work) if do_ocr else []
+        overlays = []
+        if do_ocr:
+            progress("ocr", 80)
+            overlays = self._ocr_overlays(item.path, work, translator)
 
         # 5) Ghép video cuối
+        progress("compose", 92)
+        kov = (
+            opts.keep_original_volume
+            if opts.keep_original_volume is not None
+            else cfg.tts.get("keep_original_volume", 0.12)
+        )
+        compositor = Compositor(cfg.compose, keep_original_volume=kov)
         out_path = cfg.output_dir / f"{item.id}_vi.mp4"
-        self.compositor.compose(
+        compositor.compose(
             video=item.path,
             vi_voice=vi_voice,
             srt=srt_path,
@@ -153,30 +199,36 @@ class Pipeline:
             overlays=overlays,
         )
 
-        # 6) Đăng
-        uploaded = self._upload(item, out_path)
+        # 6) Đăng (nếu job yêu cầu, hoặc theo config mặc định)
+        progress("upload", 98)
+        uploaded = self._upload(item, out_path, opts)
 
         self.state.mark(
             item.id,
             {
                 "title": item.title,
                 "url": item.url,
-                "mode": mode,
+                "target_language": opts.target_language,
                 "source_lang": src_lang,
                 "output": str(out_path),
                 "uploaded": uploaded,
             },
         )
+        progress("done", 100)
         log.info("HOÀN TẤT: %s -> %s", item.title, out_path.name)
         return out_path
 
-    def _ocr_overlays(self, video: Path, work: Path) -> list:
+    def compositor_duration(self, video: Path) -> float:
+        """Lấy thời lượng video (Compositor nhẹ, dựng tạm)."""
+        return Compositor(self.cfg.compose).video_duration(video)
+
+    def _ocr_overlays(self, video: Path, work: Path, translator: BaseTranslator) -> list:
         """Chạy OCR + dịch chữ trên màn hình, trả danh sách Overlay."""
         from .ocr.screen_text import ScreenTextTranslator
 
         o = self.cfg.ocr
         stt = ScreenTextTranslator(
-            translator=self.translator,
+            translator=translator,
             sample_fps=o.get("sample_fps", 2.0),
             min_score=o.get("min_score", 0.6),
             only_cjk=o.get("only_cjk", True),
@@ -190,43 +242,30 @@ class Pipeline:
             log.error("OCR lỗi (bỏ qua overlay): %s", e)
             return []
 
-    def _upload(self, item: VideoItem, video: Path) -> dict:
+    def _upload(self, item: VideoItem, video: Path, opts: JobOptions) -> dict:
+        """Đăng video. Ưu tiên opts.upload_targets; nếu rỗng thì theo config."""
         cfg = self.cfg
         up = cfg.upload
-        caption = up.get("caption_template", "{title}").format(title=item.title)
-        result: dict = {}
+        # caption: ưu tiên opts.caption -> template config
+        if opts.caption:
+            caption = opts.caption.format(title=item.title)
+        else:
+            caption = up.get("caption_template", "{title}").format(title=item.title)
 
-        if up.get("tiktok"):
-            try:
-                tt = TikTokUploader(cfg.env("TIKTOK_ACCESS_TOKEN"))
-                result["tiktok"] = tt.upload(video, caption)
-            except Exception as e:  # noqa: BLE001
-                log.error("Đăng TikTok lỗi: %s", e)
-                result["tiktok"] = {"error": str(e)}
+        # targets: ưu tiên opts, fallback các nền tảng bật trong config
+        if opts.upload_targets:
+            targets = list(opts.upload_targets)
+        else:
+            targets = [p for p in ("tiktok", "facebook", "instagram") if up.get(p)]
 
-        if up.get("facebook"):
-            try:
-                fb = FacebookUploader(
-                    cfg.env("FB_PAGE_ID"), cfg.env("FB_PAGE_ACCESS_TOKEN")
-                )
-                result["facebook"] = fb.upload(video, caption)
-            except Exception as e:  # noqa: BLE001
-                log.error("Đăng Facebook lỗi: %s", e)
-                result["facebook"] = {"error": str(e)}
-
-        if up.get("instagram"):
-            log.warning(
-                "Instagram cần URL công khai của video. Hãy host file rồi "
-                "gọi InstagramUploader.upload(video_url, caption)."
-            )
-            result["instagram"] = {"skipped": "cần public URL"}
-
-        return result
+        if not targets:
+            return {}
+        return upload_result(cfg, video, targets, caption)
 
     # ---------------------------------------------------------------
 
-    def process_sources(self) -> list[Path]:
-        """Quét tất cả nguồn trong config, xử lý video mới."""
+    def process_sources(self, opts: JobOptions) -> list[Path]:
+        """Quét tất cả nguồn trong config, xử lý video mới với `opts`."""
         outputs: list[Path] = []
         limit = self.cfg.download.get("max_per_channel", 5)
         for src in self.cfg.sources:
@@ -242,7 +281,7 @@ class Pipeline:
                     continue
                 url = entry.get("url") or entry.get("webpage_url") or src
                 try:
-                    out = self.process_url(url)
+                    out = self.process_url(url, opts)
                     if out:
                         outputs.append(Path(out))
                 except Exception as e:  # noqa: BLE001

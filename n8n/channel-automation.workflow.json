@@ -1,0 +1,154 @@
+{
+  "name": "Localize Studio — Auto dịch kênh",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [ { "field": "minutes", "minutesInterval": 30 } ] }
+      },
+      "id": "trigger",
+      "name": "Mỗi 30 phút",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [ 240, 300 ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.VIDEOAPP_BASE}}/api/channels/scan",
+        "sendQuery": true,
+        "queryParameters": { "parameters": [
+          { "name": "channel", "value": "https://www.tiktok.com/@TEN_KENH_NGUON" },
+          { "name": "limit", "value": "5" }
+        ] },
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "X-API-Key", "value": "={{$env.VIDEOAPP_API_KEY}}" }
+        ] },
+        "options": {}
+      },
+      "id": "scan",
+      "name": "Quét kênh nguồn",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [ 460, 300 ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "data",
+        "options": {}
+      },
+      "id": "split",
+      "name": "Tách từng video",
+      "type": "n8n-nodes-base.itemLists",
+      "typeVersion": 3,
+      "position": [ 680, 300 ]
+    },
+    {
+      "parameters": {
+        "conditions": { "options": { "caseSensitive": true }, "combinator": "and",
+          "conditions": [ { "leftValue": "={{$json.is_processed}}", "rightValue": false, "operator": { "type": "boolean", "operation": "false" } } ] }
+      },
+      "id": "filter",
+      "name": "Bỏ video đã xử lý",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [ 900, 300 ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.VIDEOAPP_BASE}}/api/jobs/url",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "X-API-Key", "value": "={{$env.VIDEOAPP_API_KEY}}" }
+        ] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"url\": \"{{$json.url}}\",\n  \"choice\": \"both\",\n  \"ocr_overlay\": true,\n  \"target_language\": \"Tiếng Việt\",\n  \"voice\": \"vi-VN-HoaiMyNeural\"\n}",
+        "options": {}
+      },
+      "id": "create",
+      "name": "Tạo job dịch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [ 1120, 300 ]
+    },
+    {
+      "parameters": { "amount": 30, "unit": "seconds" },
+      "id": "wait",
+      "name": "Chờ 30s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [ 1340, 300 ],
+      "webhookId": "poll-wait"
+    },
+    {
+      "parameters": {
+        "url": "={{$env.VIDEOAPP_BASE}}/api/jobs/{{$json.id}}",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "X-API-Key", "value": "={{$env.VIDEOAPP_API_KEY}}" }
+        ] },
+        "options": {}
+      },
+      "id": "status",
+      "name": "Kiểm tra trạng thái",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [ 1560, 300 ]
+    },
+    {
+      "parameters": {
+        "conditions": { "options": { "caseSensitive": true }, "combinator": "and",
+          "conditions": [ { "leftValue": "={{$json.state}}", "rightValue": "done", "operator": { "type": "string", "operation": "equals" } } ] }
+      },
+      "id": "isdone",
+      "name": "Đã xong?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [ 1780, 300 ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.VIDEOAPP_BASE}}/api/jobs/{{$json.id}}/upload",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "X-API-Key", "value": "={{$env.VIDEOAPP_API_KEY}}" }
+        ] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"targets\": [\"tiktok\"],\n  \"caption\": \"{{$json.title}} #xuhuong #vietsub\"\n}",
+        "options": {}
+      },
+      "id": "upload",
+      "name": "Đăng lên kênh đích",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [ 2000, 200 ]
+    },
+    {
+      "parameters": {
+        "content": "## Tự động dịch kênh\n\n**Cấu hình:**\n1. Sửa URL kênh nguồn ở node \"Quét kênh nguồn\".\n2. Đảm bảo API (uvicorn) + worker đang chạy trên host.\n3. Đặt env trong docker-compose: VIDEOAPP_BASE, VIDEOAPP_API_KEY.\n\n⚠️ **Douyin KHÔNG tải tự động được** (chặn a_bogus). Với Douyin: tải file thủ công rồi dùng trang web Upload, KHÔNG dùng workflow này.\n\nNhánh \"Đã xong? = false\" nối lại node \"Chờ 30s\" để poll tiếp.",
+        "height": 320, "width": 360
+      },
+      "id": "note",
+      "name": "Hướng dẫn",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [ 240, 460 ]
+    }
+  ],
+  "connections": {
+    "Mỗi 30 phút": { "main": [ [ { "node": "Quét kênh nguồn", "type": "main", "index": 0 } ] ] },
+    "Quét kênh nguồn": { "main": [ [ { "node": "Tách từng video", "type": "main", "index": 0 } ] ] },
+    "Tách từng video": { "main": [ [ { "node": "Bỏ video đã xử lý", "type": "main", "index": 0 } ] ] },
+    "Bỏ video đã xử lý": { "main": [ [ { "node": "Tạo job dịch", "type": "main", "index": 0 } ] ] },
+    "Tạo job dịch": { "main": [ [ { "node": "Chờ 30s", "type": "main", "index": 0 } ] ] },
+    "Chờ 30s": { "main": [ [ { "node": "Kiểm tra trạng thái", "type": "main", "index": 0 } ] ] },
+    "Kiểm tra trạng thái": { "main": [ [ { "node": "Đã xong?", "type": "main", "index": 0 } ] ] },
+    "Đã xong?": { "main": [ [ { "node": "Đăng lên kênh đích", "type": "main", "index": 0 } ], [ { "node": "Chờ 30s", "type": "main", "index": 0 } ] ] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "tags": [ { "name": "localize-studio" } ]
+}
