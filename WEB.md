@@ -86,6 +86,37 @@ Luồng: Cron → quét kênh → lọc video mới → tạo job → poll → �
 ⚠️ **Douyin không tải tự động được** (chặn `a_bogus`). Với Douyin: tải file thủ
 công rồi dùng trang **Upload** trên web — không dùng workflow tự động.
 
+## Mở web ra internet (link công khai để dùng thật)
+
+⚠️ **Phần xử lý nặng (whisper/ffmpeg) bắt buộc chạy trên máy có CPU/ffmpeg** — KHÔNG
+chạy được trên Supabase/Vercel/Netlify (chỉ host web tĩnh + serverless ngắn). Vì vậy:
+
+### Cách 1 — Cloudflare Tunnel (rẻ nhất, dùng ngay) ✅ khuyến nghị
+Giữ API + worker chạy trên PC của bạn, mở ra internet qua tunnel:
+```
+1) Đặt APP_PASSWORD trong .env  (BẮT BUỘC — kẻo người lạ xài ké máy + key)
+2) Chạy run_web.bat + run_worker.bat
+3) Chạy run_tunnel.bat  -> in ra link https://....trycloudflare.com
+```
+Mở link đó trên bất kỳ máy/điện thoại nào, đăng nhập bằng APP_PASSWORD là dùng được.
+- Link **quick tunnel đổi mỗi lần chạy**. Muốn **link cố định** (vd `video.tenban.com`):
+  cần tài khoản Cloudflare + 1 domain, tạo *named tunnel* (`cloudflared tunnel login` →
+  `cloudflared tunnel create` → trỏ DNS). Miễn phí.
+- PC phải bật khi dùng. Tốc độ phụ thuộc mạng nhà bạn.
+
+### Cách 2 — VPS/Cloud (ổn định 24/7, tốn phí)
+Thuê VPS (vd 4 vCPU/8GB) có ffmpeg, chạy `run_web` + `run_worker` ở đó, gắn domain.
+Whisper trên CPU VPS vẫn nặng → cân nhắc `transcribe.provider: gemini` để đỡ tải.
+
+### Supabase dùng vào việc gì?
+Supabase = **database + auth + storage**, KHÔNG chạy được pipeline. Có thể thêm sau để:
+- **Storage**: đẩy video kết quả lên Supabase Storage → có link CDN công khai (tiện
+  chia sẻ + Instagram yêu cầu public URL). *(chưa tích hợp — báo nếu bạn muốn làm)*
+- **Auth/DB**: thay đăng nhập mật khẩu đơn giản bằng Supabase Auth, lưu lịch sử job.
+
+Tóm lại: **link web thật = Cloudflare Tunnel (giờ) hoặc VPS (sau)**; Supabase chỉ bổ trợ
+storage/auth, không thay được máy chạy ffmpeg.
+
 ## CLI cũ vẫn dùng được
 ```bash
 python -m src.main file video.mp4 --mode voice_transcript

@@ -15,3 +15,4 @@ data/n8n/
 .venv/
 .venv-1/
 venv/
+bin/cloudflared.exe

@@ -13,7 +13,8 @@ from pathlib import Path
 
 from fastapi import (Depends, FastAPI, File, Form, HTTPException, Request,
                      UploadFile)
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
+                               RedirectResponse)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -22,6 +23,7 @@ from src.jobs import JobOptions
 from src.upload.dispatch import upload_result
 from worker.db import STATE_DONE
 
+from .auth import COOKIE, AuthMiddleware, make_token
 from .deps import get_config, list_voices, queue, require_api_key
 from .schemas import (ChannelScanIn, JobCreated, JobStatus, RerenderIn,
                       UploadIn, UrlJobIn)
@@ -33,6 +35,13 @@ EDITS_DIR = ROOT / "data" / "edits"
 EDITS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="Video Localization Studio")
+
+# Bảo vệ truy cập khi mở public (bật khi APP_PASSWORD/API_KEY được đặt)
+app.add_middleware(
+    AuthMiddleware,
+    get_password=lambda: get_config().env("APP_PASSWORD"),
+    get_api_key=lambda: get_config().env("API_KEY"),
+)
 
 templates = Jinja2Templates(directory=str(HERE / "templates"))
 app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
@@ -104,6 +113,37 @@ def _read_segments(row: dict) -> list[dict]:
 
 
 # ----------------------------------------------------------------------------
+# Đăng nhập
+# ----------------------------------------------------------------------------
+@app.get("/login", response_class=HTMLResponse)
+async def page_login(request: Request, next: str = "/", error: str = ""):
+    return templates.TemplateResponse(
+        request, "login.html", {"next": next, "error": error, "api_key": ""}
+    )
+
+
+@app.post("/login")
+async def do_login(request: Request, password: str = Form(...),
+                   next: str = Form("/")):
+    pw = get_config().env("APP_PASSWORD")
+    if not pw or password != pw:
+        return RedirectResponse(f"/login?error=1&next={next}", status_code=302)
+    resp = RedirectResponse(next or "/", status_code=302)
+    resp.set_cookie(
+        COOKIE, make_token(pw), httponly=True, samesite="lax",
+        max_age=60 * 60 * 24 * 30,  # 30 ngày
+    )
+    return resp
+
+
+@app.get("/logout")
+async def do_logout():
+    resp = RedirectResponse("/login", status_code=302)
+    resp.delete_cookie(COOKIE)
+    return resp
+
+
+# ----------------------------------------------------------------------------
 # Trang HTML
 # ----------------------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
@@ -139,7 +179,7 @@ async def page_job_detail(request: Request, job_id: str):
 # API: tạo job
 # ----------------------------------------------------------------------------
 @app.post("/api/jobs/upload", response_model=JobCreated,
-          dependencies=[Depends(require_api_key)])
+          dependencies=[])
 async def api_job_upload(
     file: UploadFile = File(...),
     choice: str = Form("both"),
@@ -170,7 +210,7 @@ async def api_job_upload(
 
 
 @app.post("/api/jobs/url", response_model=JobCreated,
-          dependencies=[Depends(require_api_key)])
+          dependencies=[])
 async def api_job_url(data: UrlJobIn):
     opts = _opts_from_in(data)
     job_id = queue().enqueue("url", data.url, opts)
@@ -180,14 +220,14 @@ async def api_job_url(data: UrlJobIn):
 # ----------------------------------------------------------------------------
 # API: trạng thái job
 # ----------------------------------------------------------------------------
-@app.get("/api/jobs", dependencies=[Depends(require_api_key)])
+@app.get("/api/jobs", dependencies=[])
 async def api_jobs(limit: int = 50, offset: int = 0, state: str | None = None):
     rows = queue().list(limit=limit, offset=offset, state=state)
     return [_row_to_status(r) for r in rows]
 
 
 @app.get("/api/jobs/{job_id}", response_model=JobStatus,
-         dependencies=[Depends(require_api_key)])
+         dependencies=[])
 async def api_job_status(job_id: str):
     row = queue().get(job_id)
     if not row:
@@ -195,7 +235,7 @@ async def api_job_status(job_id: str):
     return _row_to_status(row)
 
 
-@app.get("/api/jobs/{job_id}/result", dependencies=[Depends(require_api_key)])
+@app.get("/api/jobs/{job_id}/result", dependencies=[])
 async def api_job_result(job_id: str):
     row = queue().get(job_id)
     if not row or not row.get("output_path"):
@@ -209,7 +249,7 @@ async def api_job_result(job_id: str):
 # ----------------------------------------------------------------------------
 # API: bản dịch (sửa & render lại)
 # ----------------------------------------------------------------------------
-@app.get("/api/jobs/{job_id}/segments", dependencies=[Depends(require_api_key)])
+@app.get("/api/jobs/{job_id}/segments", dependencies=[])
 async def api_job_segments(job_id: str):
     row = queue().get(job_id)
     if not row:
@@ -218,7 +258,7 @@ async def api_job_segments(job_id: str):
 
 
 @app.post("/api/jobs/{job_id}/rerender", response_model=JobCreated,
-          dependencies=[Depends(require_api_key)])
+          dependencies=[])
 async def api_job_rerender(job_id: str, data: RerenderIn):
     import json
     row = queue().get(job_id)
@@ -285,7 +325,7 @@ def _build_downloader():
     )
 
 
-@app.get("/api/channels/scan", dependencies=[Depends(require_api_key)])
+@app.get("/api/channels/scan", dependencies=[])
 async def api_channel_scan(channel: str | None = None, limit: int = 5):
     from src.utils.state import State
     cfg = get_config()
@@ -310,7 +350,7 @@ async def api_channel_scan(channel: str | None = None, limit: int = 5):
     return out
 
 
-@app.post("/api/channels/scan", dependencies=[Depends(require_api_key)])
+@app.post("/api/channels/scan", dependencies=[])
 async def api_channel_scan_enqueue(data: ChannelScanIn):
     from src.utils.state import State
     cfg = get_config()
@@ -339,7 +379,7 @@ async def api_channel_scan_enqueue(data: ChannelScanIn):
 # ----------------------------------------------------------------------------
 # API: đăng kết quả lên nền tảng
 # ----------------------------------------------------------------------------
-@app.post("/api/jobs/{job_id}/upload", dependencies=[Depends(require_api_key)])
+@app.post("/api/jobs/{job_id}/upload", dependencies=[])
 async def api_job_upload_result(job_id: str, data: UploadIn):
     row = queue().get(job_id)
     if not row or row["state"] != STATE_DONE or not row.get("output_path"):
