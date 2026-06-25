@@ -3,44 +3,46 @@
 {% block nav_jobs %}active{% endblock %}
 
 {% block content %}
-<header class="page-head">
-  <h1>Hàng đợi xử lý</h1>
-  <p class="muted">Theo dõi tiến trình các video đang dịch.</p>
+<header class="jobs-head">
+  <div>
+    <h1 style="margin:0 0 7px;font-size:26px;font-weight:700;letter-spacing:-.5px">Hàng đợi xử lý</h1>
+    <p class="muted" style="margin:0;font-size:14.5px">Theo dõi tiến trình các video đang dịch.</p>
+  </div>
+  <a href="/" class="btn btn-primary btn-sm">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+    Dịch video mới
+  </a>
 </header>
 
-<div class="card" hx-get="/jobs" hx-trigger="every 4s" hx-select="#jobs-table" hx-target="#jobs-table" hx-swap="outerHTML">
-  <div id="jobs-table">
+<div hx-get="/jobs" hx-trigger="every 4s" hx-select="#jobs-card" hx-target="#jobs-card" hx-swap="outerHTML">
+  <div class="jobs-card" id="jobs-card">
     {% if not jobs %}
       <div class="empty">
         <div class="empty-ico">📭</div>
         <p>Chưa có job nào. <a href="/">Tạo job dịch đầu tiên →</a></p>
       </div>
     {% else %}
-    <table class="table">
-      <thead>
-        <tr><th>Tiêu đề</th><th>Nguồn</th><th>Trạng thái</th><th>Tiến trình</th><th></th></tr>
-      </thead>
-      <tbody>
-        {% for j in jobs %}
-        <tr>
-          <td class="td-title"><a href="/jobs/{{ j.id }}">{{ j.title or j.id[:8] }}</a></td>
-          <td><span class="tag">{{ j.source_type }}</span></td>
-          <td><span class="badge badge-{{ j.state }}">{{ j.state }}</span></td>
-          <td class="td-prog">
-            <div class="mini-bar"><span style="width: {{ j.percent }}%"></span></div>
-            <small class="muted">{{ j.stage or '' }} · {{ j.percent }}%</small>
-          </td>
-          <td class="td-actions">
-            {% if j.state == 'done' and j.output_url %}
-              <a class="btn btn-sm" href="{{ j.output_url }}" target="_blank">Xem</a>
-            {% else %}
-              <a class="btn btn-sm btn-ghost" href="/jobs/{{ j.id }}">Chi tiết</a>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+      <div class="jt-row jt-head">
+        <span>Tiêu đề</span><span>Nguồn</span><span>Trạng thái</span>
+        <span class="jt-prog">Tiến trình</span><span class="jt-act"></span>
+      </div>
+      {% for j in jobs %}
+      <div class="jt-row">
+        <div class="jt-title">
+          <span class="jt-thumb">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M10 9l5 3-5 3z"/></svg>
+          </span>
+          <a href="/jobs/{{ j.id }}">{{ j.title or j.id[:8] }}</a>
+        </div>
+        <span class="tag">{{ j.source_type }}</span>
+        <span class="badge badge-{{ j.state }}">{{ j.state }}</span>
+        <div class="jt-prog">
+          <div class="mini-bar {{ j.state }}"><span style="width: {{ j.percent }}%"></span></div>
+          <div class="jt-stage">{{ j.stage or '' }} · {{ j.percent }}%</div>
+        </div>
+        <a class="btn btn-sm jt-act" href="/jobs/{{ j.id }}">Chi tiết</a>
+      </div>
+      {% endfor %}
     {% endif %}
   </div>
 </div>

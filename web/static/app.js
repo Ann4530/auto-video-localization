@@ -1,4 +1,11 @@
 /* Localize Studio — tương tác phía client (vanilla JS, không framework) */
+
+// ---- Theme sáng/tối (global, gọi từ nút trong HTML) ----
+function lsTheme(t) {
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem('ls-theme', t); } catch (e) {}
+}
+
 (function () {
   "use strict";
 
@@ -19,8 +26,9 @@
     fetch("/healthz").then(function (r) { return r.json(); }).then(function (d) {
       el.classList.add("ok"); el.classList.remove("bad");
       el.innerHTML = '<span class="dot"></span> ' +
-        (d.running ? "Đang xử lý " + d.running : "Online") +
-        ' · chờ ' + (d.queued || 0);
+        (d.running ? "Đang xử lý " + d.running : "Đã kết nối · worker chạy");
+      var nc = document.getElementById("nav-count");
+      if (nc) { var a = (d.queued || 0) + (d.running || 0); nc.textContent = a || "·"; }
     }).catch(function () {
       el.classList.add("bad"); el.classList.remove("ok");
       el.innerHTML = '<span class="dot"></span> Mất kết nối';

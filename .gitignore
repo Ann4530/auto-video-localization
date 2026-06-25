@@ -16,3 +16,7 @@ data/n8n/
 .venv-1/
 venv/
 bin/cloudflared.exe
+
+# Tài liệu thiết kế (không commit)
+UIUX redesign request/
+*.zip

@@ -1,12 +1,15 @@
 {% extends "base.html" %}
-{% block title %}Sửa bản dịch · {{ job.title }}{% endblock %}
+{% block title %}Sửa bản dịch · Localize Studio{% endblock %}
 {% block nav_jobs %}active{% endblock %}
 
 {% block content %}
+<a href="/jobs/{{ job.id }}" class="back">
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+  Quay lại job
+</a>
 <header class="page-head">
-  <a href="/jobs/{{ job.id }}" class="back">← Quay lại job</a>
-  <h1>Sửa bản dịch</h1>
-  <p class="muted">Chỉnh chữ, thời gian, thêm/xoá đoạn → render lại video mới (không bóc lời/dịch lại).</p>
+  <h1 style="font-size:24px">Sửa bản dịch</h1>
+  <p>Chỉnh lời thoại &amp; thời gian, rồi render lại video.</p>
 </header>
 
 {% if not segments %}
@@ -15,50 +18,55 @@
   <p>Job này chưa có bản dịch lời thoại để sửa (có thể chỉ chạy OCR).</p>
 </div></div>
 {% else %}
-
 <div class="grid-edit">
   <div class="card">
     <div class="seg-head">
-      <h2>Các đoạn dịch (<span id="seg-count">{{ segments|length }}</span>)</h2>
-      <button class="btn btn-sm" id="add-seg">＋ Thêm đoạn</button>
+      <h2>Phân đoạn phụ đề</h2>
+      <span class="muted" style="font-size:12px"><span id="seg-count">{{ segments|length }}</span> đoạn</span>
     </div>
     <div class="seg-list" id="seg-list">
       {% for s in segments %}
       <div class="seg-item" data-row>
         <div class="seg-time">
-          <input type="number" step="0.01" class="t-start" value="{{ '%.2f'|format(s.start) }}" title="Bắt đầu (giây)">
+          <input class="t-start" value="{{ '%.2f'|format(s.start) }}">
           <span>→</span>
-          <input type="number" step="0.01" class="t-end" value="{{ '%.2f'|format(s.end) }}" title="Kết thúc (giây)">
-          <button class="del-seg" title="Xoá đoạn">✕</button>
+          <input class="t-end" value="{{ '%.2f'|format(s.end) }}">
+          <button class="del-seg" title="Xoá" type="button">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
         </div>
         <textarea class="t-text" rows="2">{{ s.text }}</textarea>
       </div>
       {% endfor %}
     </div>
+    <button class="btn btn-sm" id="add-seg" type="button" style="margin-top:14px">＋ Thêm đoạn</button>
   </div>
 
   <aside class="card render-panel">
     <h2>Render lại</h2>
-    <label class="field">
-      <span class="field-label">Chế độ</span>
+    <label class="field-label">Chế độ</label>
+    <div class="select-wrap" style="margin-bottom:14px">
       <select id="r-choice">
         <option value="both">Lồng tiếng + phụ đề</option>
         <option value="voice">Chỉ lồng tiếng</option>
         <option value="text">Chỉ phụ đề</option>
       </select>
-    </label>
-    <label class="field" id="r-voice-field">
-      <span class="field-label">Giọng đọc</span>
+      <span class="chev"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span>
+    </div>
+    <div id="r-voice-field">
+      <label class="field-label">Giọng đọc</label>
       <input type="text" id="r-voice-search" placeholder="Lọc giọng…" style="margin-bottom:6px">
-      <select id="r-voice">
+      <select id="r-voice" size="4">
         {% for v in voices %}
         <option value="{{ v.ShortName }}" {% if v.ShortName == 'vi-VN-HoaiMyNeural' %}selected{% endif %}>{{ v.ShortName }} · {{ v.Gender }}</option>
         {% endfor %}
       </select>
-    </label>
-    <button class="btn btn-primary" id="rerender-btn" style="width:100%;justify-content:center">🚀 Render lại</button>
-    <p class="form-msg" id="r-msg"></p>
-    <p class="muted" style="font-size:12px">Tạo job mới, giữ nguyên video gốc, chỉ áp bản dịch đã sửa.</p>
+    </div>
+    <button class="btn btn-primary" id="rerender-btn" type="button" style="width:100%;justify-content:center;margin-top:14px">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 4v4h4"/></svg>
+      Render lại video
+    </button>
+    <p class="form-msg" id="r-msg" style="margin:12px 0 0">Chỉ áp bản dịch đã sửa, ~1–2 phút.</p>
   </aside>
 </div>
 {% endif %}
@@ -72,57 +80,49 @@
   var list = document.getElementById("seg-list");
   if (!list) return;
 
-  function rowTemplate(start, end, text) {
+  function rowTemplate(start, end) {
     var d = document.createElement("div");
     d.className = "seg-item"; d.setAttribute("data-row", "");
     d.innerHTML =
       '<div class="seg-time">' +
-        '<input type="number" step="0.01" class="t-start" value="' + start + '">' +
+        '<input class="t-start" value="' + start + '">' +
         '<span>→</span>' +
-        '<input type="number" step="0.01" class="t-end" value="' + end + '">' +
-        '<button class="del-seg" title="Xoá">✕</button>' +
+        '<input class="t-end" value="' + end + '">' +
+        '<button class="del-seg" type="button" title="Xoá">✕</button>' +
       '</div>' +
       '<textarea class="t-text" rows="2"></textarea>';
-    d.querySelector(".t-text").value = text || "";
     return d;
   }
   function refreshCount(){ document.getElementById("seg-count").textContent = list.querySelectorAll("[data-row]").length; }
 
   list.addEventListener("click", function (e) {
-    if (e.target.classList.contains("del-seg")) {
-      e.preventDefault(); e.target.closest("[data-row]").remove(); refreshCount();
-    }
+    var b = e.target.closest(".del-seg");
+    if (b) { e.preventDefault(); b.closest("[data-row]").remove(); refreshCount(); }
   });
   document.getElementById("add-seg").addEventListener("click", function () {
     var rows = list.querySelectorAll("[data-row]");
     var last = rows[rows.length - 1];
     var start = last ? parseFloat(last.querySelector(".t-end").value) || 0 : 0;
-    list.appendChild(rowTemplate(start.toFixed(2), (start + 2).toFixed(2), ""));
+    list.appendChild(rowTemplate(start.toFixed(2), (start + 2).toFixed(2)));
     refreshCount();
   });
 
-  // lọc giọng
   var vs = document.getElementById("r-voice-search"), vsel = document.getElementById("r-voice");
   if (vs) vs.addEventListener("input", function () {
     var q = vs.value.toLowerCase();
     Array.prototype.forEach.call(vsel.options, function (o) { o.hidden = q && o.value.toLowerCase().indexOf(q) < 0; });
   });
-  // ẩn giọng nếu chỉ phụ đề
   var rc = document.getElementById("r-choice"), vf = document.getElementById("r-voice-field");
   rc.addEventListener("change", function () { vf.style.display = rc.value === "text" ? "none" : ""; });
 
-  // submit render lại
   var btn = document.getElementById("rerender-btn"), msg = document.getElementById("r-msg");
   btn.addEventListener("click", function () {
     var segs = [];
     list.querySelectorAll("[data-row]").forEach(function (r) {
       var text = r.querySelector(".t-text").value.trim();
       if (!text) return;
-      segs.push({
-        start: parseFloat(r.querySelector(".t-start").value) || 0,
-        end: parseFloat(r.querySelector(".t-end").value) || 0,
-        text: text
-      });
+      segs.push({ start: parseFloat(r.querySelector(".t-start").value) || 0,
+                  end: parseFloat(r.querySelector(".t-end").value) || 0, text: text });
     });
     if (!segs.length) { msg.textContent = "Cần ít nhất 1 đoạn."; msg.className = "form-msg err"; return; }
     btn.disabled = true; msg.textContent = "Đang tạo job render…"; msg.className = "form-msg";

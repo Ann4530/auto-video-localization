@@ -165,7 +165,9 @@ class Pipeline:
             else:
                 # 1) Bóc lời  2) Dịch
                 progress("transcribe", 10)
-                segments, src_lang = self.transcriber.transcribe(item.path)
+                segments, src_lang = self.transcriber.transcribe(
+                    item.path, language=opts.source_language or None
+                )
                 progress("translate", 45)
                 vi_segments = translator.translate_segments(segments)
             # Luôn lưu bản dịch (để user sửa/render lại sau)

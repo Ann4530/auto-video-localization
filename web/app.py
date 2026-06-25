@@ -20,6 +20,7 @@ from fastapi.templating import Jinja2Templates
 
 from src.config import ROOT
 from src.jobs import JobOptions
+from src.languages import SOURCE_LANGUAGES, TARGET_LANGUAGES
 from src.upload.dispatch import upload_result
 from worker.db import STATE_DONE
 
@@ -60,6 +61,7 @@ def _opts_from_in(data) -> JobOptions:
         ocr_overlay=data.ocr_overlay,
         ocr_all_text=data.ocr_all_text,
         target_language=data.target_language,
+        source_language=data.source_language,
         voice=data.voice,
         rate=data.rate,
         keep_original_volume=data.keep_original_volume,
@@ -151,7 +153,9 @@ async def page_index(request: Request):
     voices = await list_voices()
     return templates.TemplateResponse(
         request, "index.html",
-        {"voices": voices, "api_key": _ui_key()},
+        {"voices": voices, "api_key": _ui_key(),
+         "target_languages": TARGET_LANGUAGES,
+         "source_languages": SOURCE_LANGUAGES},
     )
 
 
@@ -186,6 +190,7 @@ async def api_job_upload(
     ocr_overlay: bool = Form(False),
     ocr_all_text: bool = Form(False),
     target_language: str = Form("Tiếng Việt"),
+    source_language: str | None = Form(None),
     voice: str = Form("vi-VN-HoaiMyNeural"),
     rate: str = Form("+0%"),
     keep_original_volume: float | None = Form(None),
@@ -201,7 +206,7 @@ async def api_job_upload(
 
     opts = JobOptions.from_request(
         choice, ocr_overlay=ocr_overlay, ocr_all_text=ocr_all_text,
-        target_language=target_language,
+        target_language=target_language, source_language=source_language,
         voice=voice, rate=rate, keep_original_volume=keep_original_volume,
         provider=provider, model=model, style=style,
     )

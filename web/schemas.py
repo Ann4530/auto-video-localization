@@ -12,6 +12,7 @@ class JobOptionsIn(BaseModel):
     ocr_overlay: bool = False
     ocr_all_text: bool = False
     target_language: str = "Tiếng Việt"
+    source_language: str | None = None
     voice: str = "vi-VN-HoaiMyNeural"
     rate: str = "+0%"
     keep_original_volume: float | None = None

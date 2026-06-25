@@ -36,7 +36,9 @@ transcribe:
   #   whisper : faster-whisper chạy LOCAL (offline, nhưng ngốn RAM)
   #   gemini  : đẩy audio lên Gemini API (KHÔNG tốn RAM, ~1500 lượt free/ngày,
   #             dùng chung GEMINI_API_KEY với bước dịch). Khuyến nghị khi máy yếu.
-  provider: "whisper"
+  # Máy RAM yếu -> dùng gemini (bóc lời qua API, KHÔNG tốn RAM). Đổi "whisper"
+  # nếu muốn chạy offline và máy đủ RAM.
+  provider: "gemini"
   gemini_model: "gemini-2.5-flash"   # model dùng cho provider=gemini
   # Model whisper (khi provider=whisper): tiny / base / small / medium / large-v3
   # large-v3 chính xác nhất, base/small đủ dùng và nhanh

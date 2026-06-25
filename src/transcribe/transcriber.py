@@ -34,7 +34,8 @@ class Segment:
 
 
 class BaseTranscriber:
-    def transcribe(self, media_path: Path) -> tuple[list[Segment], str]:  # pragma: no cover
+    def transcribe(self, media_path: Path,
+                   language: str | None = None) -> tuple[list[Segment], str]:  # pragma: no cover
         raise NotImplementedError
 
 
@@ -63,11 +64,12 @@ class WhisperTranscriber(BaseTranscriber):
             num_workers=1,
         )
 
-    def transcribe(self, media_path: Path) -> tuple[list[Segment], str]:
+    def transcribe(self, media_path: Path,
+                   language: str | None = None) -> tuple[list[Segment], str]:
         log.info("Bóc lời (whisper): %s", media_path.name)
         segments_iter, info = self._model.transcribe(
             str(media_path),
-            language=self.language,
+            language=language or self.language or None,
             vad_filter=True,             # lọc khoảng lặng -> timestamp gọn hơn
             beam_size=5,
         )
@@ -123,11 +125,11 @@ class GeminiTranscriber(BaseTranscriber):
         )
         return tmp
 
-    def _call(self, audio_b64: str, retries: int = 5) -> dict:
+    def _call(self, audio_b64: str, retries: int = 5, lang: str | None = None) -> dict:
         url = f"{self.BASE}/{self.model}:generateContent"
         prompt = _ASR_PROMPT
-        if self.language:
-            prompt += f"\nNgôn ngữ audio là: {self.language}."
+        if lang:
+            prompt += f"\nNgôn ngữ audio là: {lang}."
         body = {
             "contents": [{
                 "role": "user",
@@ -177,12 +179,13 @@ class GeminiTranscriber(BaseTranscriber):
                 raise last_429
         raise RuntimeError("Gemini ASR hết lượt retry")
 
-    def transcribe(self, media_path: Path) -> tuple[list[Segment], str]:
+    def transcribe(self, media_path: Path,
+                   language: str | None = None) -> tuple[list[Segment], str]:
         log.info("Bóc lời (Gemini): %s", media_path.name)
         audio = self._extract_audio(media_path)
         with open(audio, "rb") as f:
             audio_b64 = base64.b64encode(f.read()).decode("ascii")
-        result = self._call(audio_b64)
+        result = self._call(audio_b64, lang=language or self.language)
         try:
             audio.unlink(missing_ok=True)
         except OSError:

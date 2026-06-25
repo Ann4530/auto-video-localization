@@ -34,6 +34,7 @@ class JobOptions:
 
     # --- Dịch ---
     target_language: str = "Tiếng Việt"
+    source_language: str | None = None  # mã ISO ('zh','en'...); None/"" = tự động
     provider: str | None = None    # None -> dùng config.translate.provider
     model: str | None = None       # None -> dùng config.translate.model
     style: str | None = None       # None -> dùng config.translate.style
