@@ -5,6 +5,7 @@ data/downloads/
 data/work/
 data/output/
 data/uploads/
+data/edits/
 data/state.json
 data/douyin_cookies.txt
 data/jobs.db
