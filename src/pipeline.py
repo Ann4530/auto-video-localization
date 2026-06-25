@@ -148,6 +148,8 @@ class Pipeline:
         do_voice = opts.dub
         do_subtitle = opts.subtitles
         do_ocr = opts.ocr_overlay
+        out_dir = Path(opts.output_dir) if opts.output_dir else cfg.output_dir
+        out_dir.mkdir(parents=True, exist_ok=True)
         log.info("Job: lồng tiếng=%s, phụ đề=%s, OCR=%s, ngôn ngữ=%s",
                  do_voice, do_subtitle, do_ocr, opts.target_language)
 
@@ -171,12 +173,12 @@ class Pipeline:
                 progress("translate", 45)
                 vi_segments = translator.translate_segments(segments)
             # Luôn lưu bản dịch (để user sửa/render lại sau)
-            self._save_segments(item, vi_segments)
+            self._save_segments(item, vi_segments, out_dir)
             if do_subtitle:
                 progress("subtitles", 55)
                 srt_path = write_srt(vi_segments, work / "vi.srt")
                 # xuất kèm transcript ra thư mục output cho tiện
-                write_srt(vi_segments, cfg.output_dir / f"{item.id}_vi.srt")
+                write_srt(vi_segments, out_dir / f"{item.id}_vi.srt")
             if do_voice:
                 progress("dubbing", 65)
                 total = self.compositor_duration(item.path)
@@ -201,7 +203,7 @@ class Pipeline:
             else cfg.tts.get("keep_original_volume", 0.12)
         )
         compositor = Compositor(cfg.compose, keep_original_volume=kov)
-        out_path = cfg.output_dir / f"{item.id}_vi.mp4"
+        out_path = out_dir / f"{item.id}_vi.mp4"
         compositor.compose(
             video=item.path,
             vi_voice=vi_voice,
@@ -233,14 +235,11 @@ class Pipeline:
         """Lấy thời lượng video (Compositor nhẹ, dựng tạm)."""
         return Compositor(self.cfg.compose).video_duration(video)
 
-    def _segments_path(self, item: VideoItem) -> Path:
-        """Đường dẫn JSON lưu bản dịch (cạnh video output, để sửa/render lại)."""
-        return self.cfg.output_dir / f"{item.id}_vi.segments.json"
-
-    def _save_segments(self, item: VideoItem, segments) -> None:
+    def _save_segments(self, item: VideoItem, segments, out_dir: Path | None = None) -> None:
         import json
+        out_dir = out_dir or self.cfg.output_dir
         data = [{"start": s.start, "end": s.end, "text": s.text} for s in segments]
-        self._segments_path(item).write_text(
+        (out_dir / f"{item.id}_vi.segments.json").write_text(
             json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8"
         )
 

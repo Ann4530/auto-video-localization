@@ -28,8 +28,33 @@ class Queue:
         source_ref: str,
         opts: JobOptions,
         title: str | None = None,
+        project_id: str | None = None,
     ) -> str:
-        return self.db.create(source_type, source_ref, title, opts.to_dict())
+        return self.db.create(source_type, source_ref, title, opts.to_dict(),
+                              project_id=project_id)
+
+    # --- Projects (uỷ quyền cho JobDB) ---
+    def create_project(self, name: str, settings: dict | None = None) -> str:
+        return self.db.create_project(name, settings)
+
+    def update_project(self, pid: str, name=None, settings=None) -> None:
+        self.db.update_project(pid, name, settings)
+
+    def get_project(self, pid: str):
+        return self.db.get_project(pid)
+
+    def list_projects(self):
+        return self.db.list_projects()
+
+    def delete_project(self, pid: str) -> None:
+        self.db.delete_project(pid)
+
+    def ensure_default_project(self) -> str:
+        """Lấy (hoặc tạo) project 'Mặc định' để mọi job đều thuộc 1 project."""
+        for p in self.db.list_projects():
+            if p["name"] == "Mặc định":
+                return p["id"]
+        return self.db.create_project("Mặc định", {})
 
     def claim(self) -> dict[str, Any] | None:
         return self.db.claim_next()
@@ -49,8 +74,9 @@ class Queue:
     def get(self, job_id: str) -> dict[str, Any] | None:
         return self.db.get(job_id)
 
-    def list(self, limit: int = 50, offset: int = 0, state: str | None = None):
-        return self.db.list(limit, offset, state)
+    def list(self, limit: int = 50, offset: int = 0, state: str | None = None,
+             project_id: str | None = None):
+        return self.db.list(limit, offset, state, project_id)
 
     def counts(self) -> dict[str, int]:
         return self.db.counts()

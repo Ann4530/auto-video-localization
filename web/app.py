@@ -26,14 +26,26 @@ from worker.db import STATE_DONE
 
 from .auth import COOKIE, AuthMiddleware, make_token
 from .deps import get_config, list_voices, queue, require_api_key
-from .schemas import (ChannelScanIn, JobCreated, JobStatus, RerenderIn,
-                      UploadIn, UrlJobIn)
+from .schemas import (ChannelScanIn, JobCreated, JobStatus, ProjectIn,
+                      ProjectUpdate, RerenderIn, UploadIn, UrlJobIn)
 
 HERE = Path(__file__).resolve().parent
 UPLOAD_DIR = ROOT / "data" / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 EDITS_DIR = ROOT / "data" / "edits"
 EDITS_DIR.mkdir(parents=True, exist_ok=True)
+PROJECTS_DIR = ROOT / "data" / "projects"
+PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _project_dirs(pid: str):
+    """Trả (source_dir, output_dir) của project, tạo nếu chưa có."""
+    base = PROJECTS_DIR / pid
+    src = base / "source"
+    out = base / "output"
+    src.mkdir(parents=True, exist_ok=True)
+    out.mkdir(parents=True, exist_ok=True)
+    return src, out
 
 app = FastAPI(title="Video Localization Studio")
 
@@ -49,6 +61,7 @@ app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 # Phục vụ file kết quả để preview/tải
 _cfg = get_config()
 app.mount("/outputs", StaticFiles(directory=str(_cfg.output_dir)), name="outputs")
+app.mount("/projectfiles", StaticFiles(directory=str(PROJECTS_DIR)), name="projectfiles")
 
 
 # ----------------------------------------------------------------------------
@@ -73,10 +86,18 @@ def _opts_from_in(data) -> JobOptions:
     )
 
 
+def _output_url(output_path: str | None) -> str | None:
+    if not output_path:
+        return None
+    p = Path(output_path)
+    try:
+        rel = p.resolve().relative_to(PROJECTS_DIR.resolve())
+        return "/projectfiles/" + str(rel).replace("\\", "/")
+    except ValueError:
+        return f"/outputs/{p.name}"
+
+
 def _row_to_status(row: dict) -> JobStatus:
-    output_url = None
-    if row.get("output_path"):
-        output_url = f"/outputs/{Path(row['output_path']).name}"
     return JobStatus(
         id=row["id"],
         source_type=row["source_type"],
@@ -84,7 +105,7 @@ def _row_to_status(row: dict) -> JobStatus:
         state=row["state"],
         stage=row.get("stage"),
         percent=row.get("percent") or 0,
-        output_url=output_url,
+        output_url=_output_url(row.get("output_path")),
         error=row.get("error"),
         created_at=row.get("created_at"),
         updated_at=row.get("updated_at"),
@@ -151,11 +172,14 @@ async def do_logout():
 @app.get("/", response_class=HTMLResponse)
 async def page_index(request: Request):
     voices = await list_voices()
+    projects = queue().list_projects()
     return templates.TemplateResponse(
         request, "index.html",
         {"voices": voices, "api_key": _ui_key(),
          "target_languages": TARGET_LANGUAGES,
-         "source_languages": SOURCE_LANGUAGES},
+         "source_languages": SOURCE_LANGUAGES,
+         "projects": projects,
+         "sel_project": request.query_params.get("project", "")},
     )
 
 
@@ -197,10 +221,13 @@ async def api_job_upload(
     provider: str | None = Form(None),
     model: str | None = Form(None),
     style: str | None = Form(None),
+    project_id: str | None = Form(None),
 ):
-    # Lưu file upload
+    pid = project_id or queue().ensure_default_project()
+    src_dir, out_dir = _project_dirs(pid)
+    # Lưu file upload vào thư mục source của project
     safe_name = Path(file.filename or "video.mp4").name
-    dest = UPLOAD_DIR / f"{uuid.uuid4().hex}_{safe_name}"
+    dest = src_dir / f"{uuid.uuid4().hex}_{safe_name}"
     with open(dest, "wb") as out:
         shutil.copyfileobj(file.file, out)
 
@@ -208,17 +235,21 @@ async def api_job_upload(
         choice, ocr_overlay=ocr_overlay, ocr_all_text=ocr_all_text,
         target_language=target_language, source_language=source_language,
         voice=voice, rate=rate, keep_original_volume=keep_original_volume,
-        provider=provider, model=model, style=style,
+        provider=provider, model=model, style=style, output_dir=str(out_dir),
     )
-    job_id = queue().enqueue("file", str(dest), opts, title=Path(safe_name).stem)
+    job_id = queue().enqueue("file", str(dest), opts, title=Path(safe_name).stem,
+                             project_id=pid)
     return JobCreated(id=job_id)
 
 
 @app.post("/api/jobs/url", response_model=JobCreated,
           dependencies=[])
 async def api_job_url(data: UrlJobIn):
+    pid = data.project_id or queue().ensure_default_project()
+    _, out_dir = _project_dirs(pid)
     opts = _opts_from_in(data)
-    job_id = queue().enqueue("url", data.url, opts)
+    opts.output_dir = str(out_dir)
+    job_id = queue().enqueue("url", data.url, opts, project_id=pid)
     return JobCreated(id=job_id)
 
 
@@ -281,15 +312,18 @@ async def api_job_rerender(job_id: str, data: RerenderIn):
     )
 
     # Render lại từ CÙNG nguồn, bỏ qua bóc lời + dịch (segments_path đã đặt).
+    pid = row.get("project_id") or queue().ensure_default_project()
+    _, out_dir = _project_dirs(pid)
     opts = JobOptions.from_request(
         data.choice,
         segments_path=str(seg_file),
         voice=data.voice, rate=data.rate,
         keep_original_volume=data.keep_original_volume,
+        output_dir=str(out_dir),
     )
     jid = queue().enqueue(
         row["source_type"], row["source_ref"], opts,
-        title=(row.get("title") or "") + " (đã sửa)",
+        title=(row.get("title") or "") + " (đã sửa)", project_id=pid,
     )
     return JobCreated(id=jid)
 
@@ -368,7 +402,10 @@ async def api_channel_scan_enqueue(data: ChannelScanIn):
         entries = dl.list_channel_videos(ch, data.limit)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Không quét được kênh: {e}")
+    pid = data.project_id or queue().ensure_default_project()
+    _, out_dir = _project_dirs(pid)
     opts = _opts_from_in(data)
+    opts.output_dir = str(out_dir)
     created, skipped = [], []
     for e in entries:
         vid = str(e.get("id", ""))
@@ -376,7 +413,7 @@ async def api_channel_scan_enqueue(data: ChannelScanIn):
             skipped.append(vid)
             continue
         url = e.get("url") or e.get("webpage_url") or ch
-        jid = queue().enqueue("url", url, opts, title=e.get("title"))
+        jid = queue().enqueue("url", url, opts, title=e.get("title"), project_id=pid)
         created.append({"id": jid, "video_id": vid, "url": url})
     return {"created": created, "skipped": skipped}
 
@@ -395,6 +432,85 @@ async def api_job_upload_result(job_id: str, data: UploadIn):
     caption = (data.caption or "{title}").format(title=row.get("title") or "")
     result = upload_result(get_config(), path, data.targets, caption)
     return result
+
+
+# ----------------------------------------------------------------------------
+# API: Projects
+# ----------------------------------------------------------------------------
+@app.get("/api/projects", dependencies=[])
+async def api_projects():
+    return queue().list_projects()
+
+
+@app.post("/api/projects", response_model=dict, dependencies=[])
+async def api_project_create(data: ProjectIn):
+    pid = queue().create_project(data.name, data.settings)
+    _project_dirs(pid)
+    return {"id": pid}
+
+
+@app.get("/api/projects/{pid}", dependencies=[])
+async def api_project_get(pid: str):
+    p = queue().get_project(pid)
+    if not p:
+        raise HTTPException(404, "Không thấy project")
+    return p
+
+
+@app.patch("/api/projects/{pid}", dependencies=[])
+async def api_project_update(pid: str, data: ProjectUpdate):
+    if not queue().get_project(pid):
+        raise HTTPException(404, "Không thấy project")
+    queue().update_project(pid, name=data.name, settings=data.settings)
+    return {"ok": True}
+
+
+@app.delete("/api/projects/{pid}", dependencies=[])
+async def api_project_delete(pid: str):
+    queue().delete_project(pid)
+    return {"ok": True}
+
+
+@app.get("/api/projects/{pid}/jobs", dependencies=[])
+async def api_project_jobs(pid: str, limit: int = 100):
+    rows = queue().list(limit=limit, project_id=pid)
+    return [_row_to_status(r) for r in rows]
+
+
+# ----------------------------------------------------------------------------
+# Trang HTML: Projects
+# ----------------------------------------------------------------------------
+@app.get("/projects", response_class=HTMLResponse)
+async def page_projects(request: Request):
+    import json as _json
+    projects = queue().list_projects()
+    for p in projects:
+        try:
+            p["settings"] = _json.loads(p.get("settings_json") or "{}")
+        except Exception:  # noqa: BLE001
+            p["settings"] = {}
+    return templates.TemplateResponse(
+        request, "projects.html", {"projects": projects, "api_key": _ui_key()}
+    )
+
+
+@app.get("/projects/{pid}", response_class=HTMLResponse)
+async def page_project_detail(request: Request, pid: str):
+    import json as _json
+    p = queue().get_project(pid)
+    if not p:
+        raise HTTPException(404, "Không thấy project")
+    try:
+        settings = _json.loads(p.get("settings_json") or "{}")
+    except Exception:  # noqa: BLE001
+        settings = {}
+    rows = queue().list(limit=200, project_id=pid)
+    jobs = [_row_to_status(r) for r in rows]
+    return templates.TemplateResponse(
+        request, "project_detail.html",
+        {"project": p, "settings": settings, "jobs": jobs,
+         "target_languages": TARGET_LANGUAGES, "api_key": _ui_key()},
+    )
 
 
 # ----------------------------------------------------------------------------

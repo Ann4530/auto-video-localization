@@ -35,10 +35,19 @@ CREATE TABLE IF NOT EXISTS jobs (
   output_path  TEXT,
   error        TEXT,
   result_json  TEXT,                 -- kết quả (vd kết quả upload)
+  project_id   TEXT,                 -- thuộc project nào
   created_at   TEXT NOT NULL,
   updated_at   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_state ON jobs(state, created_at);
+
+CREATE TABLE IF NOT EXISTS projects (
+  id            TEXT PRIMARY KEY,
+  name          TEXT NOT NULL,
+  settings_json TEXT,                -- {source_channel, auto_upload[], default_options{}, ...}
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
 """
 
 
@@ -60,6 +69,11 @@ class JobDB:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with _connect(self.db_path) as conn:
             conn.executescript(_DDL)
+            # Migration: thêm cột project_id nếu DB cũ chưa có (TRƯỚC khi tạo index)
+            cols = [r["name"] for r in conn.execute("PRAGMA table_info(jobs)")]
+            if "project_id" not in cols:
+                conn.execute("ALTER TABLE jobs ADD COLUMN project_id TEXT")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_project ON jobs(project_id, created_at)")
 
     # --- ghi ---
     def create(
@@ -68,19 +82,65 @@ class JobDB:
         source_ref: str,
         title: str | None,
         options: dict[str, Any],
+        project_id: str | None = None,
     ) -> str:
         job_id = uuid.uuid4().hex
         now = _now()
         with _connect(self.db_path) as conn:
             conn.execute(
                 "INSERT INTO jobs (id, source_type, source_ref, title, options_json,"
-                " state, stage, percent, created_at, updated_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?)",
+                " state, stage, percent, project_id, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (job_id, source_type, source_ref, title,
                  json.dumps(options, ensure_ascii=False),
-                 STATE_QUEUED, "queued", 0, now, now),
+                 STATE_QUEUED, "queued", 0, project_id, now, now),
             )
         return job_id
+
+    # --- Projects ---
+    def create_project(self, name: str, settings: dict | None = None) -> str:
+        pid = uuid.uuid4().hex
+        now = _now()
+        with _connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO projects (id, name, settings_json, created_at, updated_at)"
+                " VALUES (?,?,?,?,?)",
+                (pid, name, json.dumps(settings or {}, ensure_ascii=False), now, now),
+            )
+        return pid
+
+    def update_project(self, pid: str, name: str | None = None,
+                       settings: dict | None = None) -> None:
+        sets, params = [], []
+        if name is not None:
+            sets.append("name=?"); params.append(name)
+        if settings is not None:
+            sets.append("settings_json=?"); params.append(json.dumps(settings, ensure_ascii=False))
+        if not sets:
+            return
+        sets.append("updated_at=?"); params.append(_now())
+        params.append(pid)
+        with _connect(self.db_path) as conn:
+            conn.execute(f"UPDATE projects SET {','.join(sets)} WHERE id=?", params)
+
+    def get_project(self, pid: str) -> dict[str, Any] | None:
+        with _connect(self.db_path) as conn:
+            row = conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
+            return dict(row) if row else None
+
+    def list_projects(self) -> list[dict[str, Any]]:
+        with _connect(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT p.*, "
+                " (SELECT COUNT(*) FROM jobs j WHERE j.project_id=p.id) AS job_count "
+                "FROM projects p ORDER BY p.created_at DESC"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def delete_project(self, pid: str) -> None:
+        with _connect(self.db_path) as conn:
+            conn.execute("DELETE FROM projects WHERE id=?", (pid,))
+            conn.execute("UPDATE jobs SET project_id=NULL WHERE project_id=?", (pid,))
 
     def claim_next(self) -> dict[str, Any] | None:
         """Lấy 1 job queued cũ nhất, chuyển sang running (atomic)."""
@@ -138,13 +198,17 @@ class JobDB:
             return dict(row) if row else None
 
     def list(
-        self, limit: int = 50, offset: int = 0, state: str | None = None
+        self, limit: int = 50, offset: int = 0, state: str | None = None,
+        project_id: str | None = None,
     ) -> list[dict[str, Any]]:
         q = "SELECT * FROM jobs"
-        params: list[Any] = []
+        where, params = [], []
         if state:
-            q += " WHERE state=?"
-            params.append(state)
+            where.append("state=?"); params.append(state)
+        if project_id:
+            where.append("project_id=?"); params.append(project_id)
+        if where:
+            q += " WHERE " + " AND ".join(where)
         q += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
         params += [limit, offset]
         with _connect(self.db_path) as conn:

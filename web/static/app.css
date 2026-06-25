@@ -237,6 +237,18 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .t-text{width:100%;border-radius:8px;padding:9px 11px;font-size:13.5px;background:var(--surface);resize:vertical}
 .render-panel{position:sticky;top:20px}
 
+/* ---------- Projects ---------- */
+.proj-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
+.proj-card{display:block;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+  box-shadow:var(--shadow);padding:18px;transition:.15s}
+.proj-card:hover{border-color:var(--accent);transform:translateY(-2px);box-shadow:var(--shadow-lg)}
+.proj-ico{width:42px;height:42px;border-radius:11px;background:var(--accent-soft);color:var(--accent-ink);
+  display:flex;align-items:center;justify-content:center;margin-bottom:12px}
+.proj-name{font-weight:700;font-size:15px;color:var(--ink);margin-bottom:6px}
+.proj-meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12.5px;color:var(--muted)}
+.proj-layout{display:grid;grid-template-columns:1fr 300px;gap:18px;align-items:start}
+@media(max-width:880px){.proj-layout{grid-template-columns:1fr}}
+
 /* ---------- Login ---------- */
 .login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;
   background:radial-gradient(900px 520px at 50% -10%, var(--accent-soft), transparent 70%)}

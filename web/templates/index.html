@@ -150,6 +150,21 @@
     </div>
   </div>
 
+  <!-- Dự án -->
+  <div class="field" style="max-width:360px">
+    <label class="field-label">Lưu vào dự án</label>
+    <div class="select-wrap">
+      <span class="lead"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span>
+      <select name="project_id" id="project_id">
+        <option value="">Mặc định</option>
+        {% for p in projects %}
+        <option value="{{ p.id }}" {% if p.id == sel_project %}selected{% endif %}>{{ p.name }}</option>
+        {% endfor %}
+      </select>
+      <span class="chev"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span>
+    </div>
+  </div>
+
   <div class="form-foot">
     <button type="submit" class="btn btn-primary" id="submit-btn">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>

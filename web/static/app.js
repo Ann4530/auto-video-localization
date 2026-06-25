@@ -137,14 +137,17 @@ function lsTheme(t) {
     setMsg("Đang gửi…", "");
 
     var choice = form.querySelector('input[name=choice]:checked').value;
+    var projSel = document.getElementById("project_id");
     var common = {
       choice: choice,
       ocr_overlay: document.getElementById("ocr_overlay").checked,
       ocr_all_text: document.getElementById("ocr_all_text").checked,
       target_language: form.target_language.value,
+      source_language: form.source_language ? form.source_language.value : "",
       voice: voiceSel ? voiceSel.value : "vi-VN-HoaiMyNeural",
       rate: rateHidden ? rateHidden.value : "+0%",
-      keep_original_volume: kov ? parseFloat(kov.value) : null
+      keep_original_volume: kov ? parseFloat(kov.value) : null,
+      project_id: projSel ? projSel.value : ""
     };
 
     var req;

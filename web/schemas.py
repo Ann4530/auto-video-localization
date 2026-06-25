@@ -21,6 +21,7 @@ class JobOptionsIn(BaseModel):
     style: str | None = None
     upload_targets: list[str] = Field(default_factory=list)
     caption: str | None = None
+    project_id: str | None = None
 
 
 class UrlJobIn(JobOptionsIn):
@@ -53,6 +54,16 @@ class ChannelScanIn(JobOptionsIn):
 class UploadIn(BaseModel):
     targets: list[str] = Field(default_factory=lambda: ["tiktok"])
     caption: str | None = None
+
+
+class ProjectIn(BaseModel):
+    name: str
+    settings: dict = Field(default_factory=dict)
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = None
+    settings: dict | None = None
 
 
 class SegmentIn(BaseModel):

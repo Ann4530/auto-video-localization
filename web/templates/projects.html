@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Dự án · Localize Studio{% endblock %}
+{% block nav_proj %}active{% endblock %}
+
+{% block content %}
+<header class="jobs-head">
+  <div>
+    <h1 style="margin:0 0 7px;font-size:26px;font-weight:700;letter-spacing:-.5px">Dự án</h1>
+    <p class="muted" style="margin:0;font-size:14.5px">Mỗi dự án gom nhiều video, có thư mục riêng và tuỳ chọn tự động hoá.</p>
+  </div>
+  <button class="btn btn-primary btn-sm" id="new-proj-btn">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+    Dự án mới
+  </button>
+</header>
+
+<form class="card" id="new-proj-form" style="display:none;max-width:520px">
+  <h2>Tạo dự án mới</h2>
+  <label class="field-label">Tên dự án</label>
+  <input type="text" id="proj-name" placeholder="VD: Kênh nấu ăn Trung Quốc" style="margin-bottom:14px">
+  <div style="display:flex;gap:10px">
+    <button type="submit" class="btn btn-primary">Tạo</button>
+    <button type="button" class="btn btn-ghost" id="cancel-proj">Huỷ</button>
+  </div>
+  <p class="form-msg" id="proj-msg" style="margin-top:10px"></p>
+</form>
+
+{% if not projects %}
+<div class="card"><div class="empty">
+  <div class="empty-ico">📁</div>
+  <p>Chưa có dự án. Bấm <b>Dự án mới</b> để bắt đầu.</p>
+</div></div>
+{% else %}
+<div class="proj-grid">
+  {% for p in projects %}
+  <a class="proj-card" href="/projects/{{ p.id }}">
+    <div class="proj-ico">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+    </div>
+    <div class="proj-name">{{ p.name }}</div>
+    <div class="proj-meta">
+      <span>{{ p.job_count }} video</span>
+      {% if p.settings.source_channel %}<span class="tag">kênh nguồn</span>{% endif %}
+      {% if p.settings.auto_upload %}<span class="tag">tự đăng</span>{% endif %}
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+  function authHeaders(){ try{return JSON.parse(document.body.getAttribute("hx-headers"));}catch(e){return {};} }
+  var btn=document.getElementById("new-proj-btn"), form=document.getElementById("new-proj-form");
+  btn.addEventListener("click",function(){ form.style.display="block"; document.getElementById("proj-name").focus(); });
+  document.getElementById("cancel-proj").addEventListener("click",function(){ form.style.display="none"; });
+  form.addEventListener("submit",function(e){
+    e.preventDefault();
+    var name=document.getElementById("proj-name").value.trim();
+    var msg=document.getElementById("proj-msg");
+    if(!name){ msg.textContent="Nhập tên dự án."; msg.className="form-msg err"; return; }
+    fetch("/api/projects",{method:"POST",headers:Object.assign({"Content-Type":"application/json"},authHeaders()),
+      body:JSON.stringify({name:name,settings:{}})})
+      .then(function(r){return r.json();})
+      .then(function(d){ window.location.href="/projects/"+d.id; })
+      .catch(function(e){ msg.textContent="Lỗi: "+e.message; msg.className="form-msg err"; });
+  });
+})();
+</script>
+{% endblock %}

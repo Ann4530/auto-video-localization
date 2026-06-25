@@ -32,6 +32,9 @@ class JobOptions:
     # --- Render lại từ bản dịch đã sửa (bỏ qua bóc lời + dịch) ---
     segments_path: str | None = None  # đường dẫn JSON [{start,end,text}] đã chỉnh
 
+    # --- Thư mục xuất kết quả (theo project). None = data/output mặc định ---
+    output_dir: str | None = None
+
     # --- Dịch ---
     target_language: str = "Tiếng Việt"
     source_language: str | None = None  # mã ISO ('zh','en'...); None/"" = tự động

@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }} · Localize Studio{% endblock %}
+{% block nav_proj %}active{% endblock %}
+
+{% block content %}
+<a href="/projects" class="back">
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+  Dự án
+</a>
+<header class="jobs-head">
+  <div>
+    <h1 style="margin:0 0 7px;font-size:24px;font-weight:700;letter-spacing:-.4px">{{ project.name }}</h1>
+    <p class="muted" style="margin:0;font-size:13px">{{ jobs|length }} video · dự án <code>{{ project.id[:8] }}</code></p>
+  </div>
+  <a class="btn btn-primary btn-sm" href="/?project={{ project.id }}">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+    Thêm video dịch
+  </a>
+</header>
+
+<div class="proj-layout" data-pid="{{ project.id }}">
+  <!-- Videos -->
+  <div>
+    <div class="jobs-card">
+      {% if not jobs %}
+        <div class="empty"><div class="empty-ico">🎬</div><p>Chưa có video. Bấm <b>Thêm video dịch</b>.</p></div>
+      {% else %}
+      <div class="jt-row jt-head"><span>Video</span><span>Trạng thái</span><span class="jt-prog">Tiến trình</span><span class="jt-act"></span></div>
+      {% for j in jobs %}
+      <div class="jt-row" style="grid-template-columns:1fr 120px 180px 88px">
+        <div class="jt-title">
+          <span class="jt-thumb"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M10 9l5 3-5 3z"/></svg></span>
+          <a href="/jobs/{{ j.id }}">{{ j.title or j.id[:8] }}</a>
+        </div>
+        <span class="badge badge-{{ j.state }}">{{ j.state }}</span>
+        <div class="jt-prog">
+          <div class="mini-bar {{ j.state }}"><span style="width: {{ j.percent }}%"></span></div>
+          <div class="jt-stage">{{ j.stage or '' }} · {{ j.percent }}%</div>
+        </div>
+        <div class="jt-act" style="display:flex;gap:6px;justify-content:flex-end">
+          {% if j.state == 'done' and j.output_url %}<a class="btn btn-sm" href="{{ j.output_url }}" target="_blank">Xem</a>{% endif %}
+          <a class="btn btn-sm btn-ghost" href="/jobs/{{ j.id }}">Mở</a>
+        </div>
+      </div>
+      {% endfor %}
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <aside class="card render-panel" style="position:sticky;top:20px">
+    <h2>Tự động hoá</h2>
+    <label class="field-label">Kênh nguồn (lấy video về)</label>
+    <input type="url" id="s-channel" value="{{ settings.source_channel or '' }}" placeholder="https://www.tiktok.com/@kenh" style="margin-bottom:12px">
+
+    <label class="field-label">Ngôn ngữ đích mặc định</label>
+    <div class="select-wrap" style="margin-bottom:12px">
+      <select id="s-target">
+        {% for lang in target_languages %}
+        <option value="{{ lang }}" {% if settings.target_language == lang %}selected{% endif %}>{{ lang }}</option>
+        {% endfor %}
+      </select>
+      <span class="chev"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span>
+    </div>
+
+    <label class="field-label">Tự đăng sau khi dịch</label>
+    <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px">
+      <label class="check-row" style="gap:9px"><input type="checkbox" id="up-tiktok" {% if 'tiktok' in (settings.auto_upload or []) %}checked{% endif %}> <span>TikTok</span></label>
+      <label class="check-row" style="gap:9px"><input type="checkbox" id="up-facebook" {% if 'facebook' in (settings.auto_upload or []) %}checked{% endif %}> <span>Facebook</span></label>
+    </div>
+
+    <button class="btn btn-primary" id="save-settings" type="button" style="width:100%;justify-content:center;margin-bottom:10px">Lưu cấu hình</button>
+    <button class="btn" id="scan-now" type="button" style="width:100%;justify-content:center">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      Quét kênh lấy video mới
+    </button>
+    <p class="form-msg" id="s-msg" style="margin:10px 0 0">Quét sẽ tạo job dịch cho video mới của kênh nguồn.</p>
+
+    <hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
+    <button class="btn btn-ghost" id="del-proj" type="button" style="width:100%;justify-content:center;color:var(--err)">Xoá dự án</button>
+  </aside>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+  var PID="{{ project.id }}";
+  function authHeaders(){ try{return JSON.parse(document.body.getAttribute("hx-headers"));}catch(e){return {};} }
+  var msg=document.getElementById("s-msg");
+  function settings(){
+    var up=[];
+    if(document.getElementById("up-tiktok").checked) up.push("tiktok");
+    if(document.getElementById("up-facebook").checked) up.push("facebook");
+    return { source_channel:document.getElementById("s-channel").value.trim(),
+             target_language:document.getElementById("s-target").value,
+             auto_upload:up };
+  }
+  document.getElementById("save-settings").addEventListener("click",function(){
+    fetch("/api/projects/"+PID,{method:"PATCH",headers:Object.assign({"Content-Type":"application/json"},authHeaders()),
+      body:JSON.stringify({settings:settings()})})
+      .then(function(r){if(!r.ok)throw new Error(r.status);return r.json();})
+      .then(function(){ msg.textContent="Đã lưu cấu hình."; msg.className="form-msg ok"; })
+      .catch(function(e){ msg.textContent="Lỗi: "+e.message; msg.className="form-msg err"; });
+  });
+  document.getElementById("scan-now").addEventListener("click",function(){
+    var s=settings();
+    if(!s.source_channel){ msg.textContent="Nhập kênh nguồn trước."; msg.className="form-msg err"; return; }
+    msg.textContent="Đang quét kênh…"; msg.className="form-msg";
+    fetch("/api/channels/scan",{method:"POST",headers:Object.assign({"Content-Type":"application/json"},authHeaders()),
+      body:JSON.stringify({channel:s.source_channel, project_id:PID, choice:"both",
+        target_language:s.target_language, upload_targets:s.auto_upload, limit:5})})
+      .then(function(r){if(!r.ok)return r.text().then(function(t){throw new Error(t);});return r.json();})
+      .then(function(d){ msg.textContent="Đã tạo "+d.created.length+" job, bỏ qua "+d.skipped.length+" (đã xử lý)."; msg.className="form-msg ok"; setTimeout(function(){location.reload();},1500); })
+      .catch(function(e){ msg.textContent="Lỗi: "+e.message; msg.className="form-msg err"; });
+  });
+  document.getElementById("del-proj").addEventListener("click",function(){
+    if(!confirm("Xoá dự án này? (video đã dịch vẫn còn trên đĩa)")) return;
+    fetch("/api/projects/"+PID,{method:"DELETE",headers:authHeaders()})
+      .then(function(){ window.location.href="/projects"; });
+  });
+})();
+</script>
+{% endblock %}
