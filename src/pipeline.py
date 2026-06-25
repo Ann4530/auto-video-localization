@@ -238,7 +238,9 @@ class Pipeline:
     def _save_segments(self, item: VideoItem, segments, out_dir: Path | None = None) -> None:
         import json
         out_dir = out_dir or self.cfg.output_dir
-        data = [{"start": s.start, "end": s.end, "text": s.text} for s in segments]
+        data = [{"start": s.start, "end": s.end, "text": s.text,
+                 **({"rate": s.rate} if getattr(s, "rate", None) else {})}
+                for s in segments]
         (out_dir / f"{item.id}_vi.segments.json").write_text(
             json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8"
         )
@@ -251,7 +253,7 @@ class Pipeline:
         data = json.loads(path.read_text(encoding="utf-8"))
         return [
             Segment(start=float(d["start"]), end=float(d["end"]),
-                    text=str(d.get("text", "")).strip())
+                    text=str(d.get("text", "")).strip(), rate=d.get("rate"))
             for d in data
             if str(d.get("text", "")).strip()
         ]

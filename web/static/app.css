@@ -229,8 +229,14 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .seg-list{display:flex;flex-direction:column;gap:11px;max-height:64vh;overflow:auto;padding-right:4px}
 .seg-item{border:1px solid var(--line);border-radius:11px;padding:12px;background:var(--surface-2)}
 .seg-time{display:flex;align-items:center;gap:8px;margin-bottom:9px}
-.seg-time input{width:84px;padding:5px 8px;border-radius:7px;font-size:12.5px;font-family:ui-monospace,monospace;background:var(--surface)}
+.seg-time input{width:64px;padding:5px 8px;border-radius:7px;font-size:12.5px;font-family:ui-monospace,monospace;background:var(--surface)}
 .seg-time span{color:var(--muted);font-size:12px}
+.seek-btn{width:26px;height:26px;border:1px solid var(--line);border-radius:7px;background:var(--surface);
+  color:var(--accent-ink);cursor:pointer;font-size:10px;flex:none}
+.seek-btn:hover{border-color:var(--accent);background:var(--accent-soft)}
+.t-rate{width:auto;padding:5px 6px;border-radius:7px;font-size:12px;background:var(--surface);cursor:pointer}
+.seg-item.active{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+.seg-item.active textarea{border-color:var(--accent)}
 .del-seg{margin-left:auto;width:28px;height:28px;border:0;border-radius:8px;background:var(--err-soft);
   color:var(--err);cursor:pointer;display:flex;align-items:center;justify-content:center}
 .del-seg:hover{opacity:.8}

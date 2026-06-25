@@ -70,6 +70,7 @@ class SegmentIn(BaseModel):
     start: float
     end: float
     text: str
+    rate: str | None = None   # tốc độ đọc riêng câu (vd "+20%")
 
 
 class RerenderIn(BaseModel):

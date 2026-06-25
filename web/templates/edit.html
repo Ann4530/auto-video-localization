@@ -8,8 +8,8 @@
   Quay lại job
 </a>
 <header class="page-head">
-  <h1 style="font-size:24px">Sửa bản dịch</h1>
-  <p>Chỉnh lời thoại &amp; thời gian, rồi render lại video.</p>
+  <h1 style="font-size:24px">Sửa bản dịch &amp; tốc độ</h1>
+  <p>Bấm vào câu để tua video tới đoạn đó. Chỉnh chữ, thời gian, tốc độ nói từng câu rồi render lại.</p>
 </header>
 
 {% if not segments %}
@@ -28,9 +28,19 @@
       {% for s in segments %}
       <div class="seg-item" data-row>
         <div class="seg-time">
+          <button class="seek-btn" type="button" title="Tua tới" data-start="{{ s.start }}">▶</button>
           <input class="t-start" value="{{ '%.2f'|format(s.start) }}">
           <span>→</span>
           <input class="t-end" value="{{ '%.2f'|format(s.end) }}">
+          <select class="t-rate" title="Tốc độ đọc câu này">
+            {% set r = s.rate or '+0%' %}
+            <option value="-20%" {% if r=='-20%' %}selected{% endif %}>0.8x</option>
+            <option value="-10%" {% if r=='-10%' %}selected{% endif %}>0.9x</option>
+            <option value="+0%" {% if r=='+0%' %}selected{% endif %}>1x</option>
+            <option value="+15%" {% if r=='+15%' %}selected{% endif %}>1.15x</option>
+            <option value="+30%" {% if r=='+30%' %}selected{% endif %}>1.3x</option>
+            <option value="+50%" {% if r=='+50%' %}selected{% endif %}>1.5x</option>
+          </select>
           <button class="del-seg" title="Xoá" type="button">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
           </button>
@@ -43,9 +53,13 @@
   </div>
 
   <aside class="card render-panel">
-    <h2>Render lại</h2>
+    {% if job.output_url %}
+    <video id="prev" src="{{ job.output_url }}" controls playsinline
+           style="width:100%;aspect-ratio:9/16;border-radius:11px;background:#000;margin-bottom:14px"></video>
+    {% endif %}
+    <h2 style="font-size:15px">Render lại</h2>
     <label class="field-label">Chế độ</label>
-    <div class="select-wrap" style="margin-bottom:14px">
+    <div class="select-wrap" style="margin-bottom:12px">
       <select id="r-choice">
         <option value="both">Lồng tiếng + phụ đề</option>
         <option value="voice">Chỉ lồng tiếng</option>
@@ -66,7 +80,7 @@
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 4v4h4"/></svg>
       Render lại video
     </button>
-    <p class="form-msg" id="r-msg" style="margin:12px 0 0">Chỉ áp bản dịch đã sửa, ~1–2 phút.</p>
+    <p class="form-msg" id="r-msg" style="margin:12px 0 0">Áp bản dịch + tốc độ đã sửa, ~1–2 phút.</p>
   </aside>
 </div>
 {% endif %}
@@ -79,25 +93,38 @@
   function authHeaders(){ try { return JSON.parse(document.body.getAttribute("hx-headers")); } catch(e){ return {}; } }
   var list = document.getElementById("seg-list");
   if (!list) return;
+  var vid = document.getElementById("prev");
 
   function rowTemplate(start, end) {
     var d = document.createElement("div");
     d.className = "seg-item"; d.setAttribute("data-row", "");
     d.innerHTML =
       '<div class="seg-time">' +
+        '<button class="seek-btn" type="button" data-start="' + start + '">▶</button>' +
         '<input class="t-start" value="' + start + '">' +
         '<span>→</span>' +
         '<input class="t-end" value="' + end + '">' +
+        '<select class="t-rate"><option value="-20%">0.8x</option><option value="-10%">0.9x</option>' +
+        '<option value="+0%" selected>1x</option><option value="+15%">1.15x</option>' +
+        '<option value="+30%">1.3x</option><option value="+50%">1.5x</option></select>' +
         '<button class="del-seg" type="button" title="Xoá">✕</button>' +
-      '</div>' +
-      '<textarea class="t-text" rows="2"></textarea>';
+      '</div><textarea class="t-text" rows="2"></textarea>';
     return d;
   }
   function refreshCount(){ document.getElementById("seg-count").textContent = list.querySelectorAll("[data-row]").length; }
 
   list.addEventListener("click", function (e) {
-    var b = e.target.closest(".del-seg");
-    if (b) { e.preventDefault(); b.closest("[data-row]").remove(); refreshCount(); }
+    var del = e.target.closest(".del-seg");
+    if (del) { e.preventDefault(); del.closest("[data-row]").remove(); refreshCount(); return; }
+    var seek = e.target.closest(".seek-btn");
+    if (seek && vid) { e.preventDefault(); vid.currentTime = parseFloat(seek.dataset.start) || 0; vid.play(); }
+  });
+  // cập nhật data-start của nút seek khi sửa thời gian
+  list.addEventListener("input", function (e) {
+    if (e.target.classList.contains("t-start")) {
+      var btn = e.target.closest(".seg-time").querySelector(".seek-btn");
+      if (btn) btn.dataset.start = e.target.value;
+    }
   });
   document.getElementById("add-seg").addEventListener("click", function () {
     var rows = list.querySelectorAll("[data-row]");
@@ -105,6 +132,16 @@
     var start = last ? parseFloat(last.querySelector(".t-end").value) || 0 : 0;
     list.appendChild(rowTemplate(start.toFixed(2), (start + 2).toFixed(2)));
     refreshCount();
+  });
+
+  // highlight câu đang phát
+  if (vid) vid.addEventListener("timeupdate", function () {
+    var t = vid.currentTime;
+    list.querySelectorAll("[data-row]").forEach(function (r) {
+      var s = parseFloat(r.querySelector(".t-start").value) || 0;
+      var e = parseFloat(r.querySelector(".t-end").value) || 0;
+      r.classList.toggle("active", t >= s && t < e);
+    });
   });
 
   var vs = document.getElementById("r-voice-search"), vsel = document.getElementById("r-voice");
@@ -122,7 +159,8 @@
       var text = r.querySelector(".t-text").value.trim();
       if (!text) return;
       segs.push({ start: parseFloat(r.querySelector(".t-start").value) || 0,
-                  end: parseFloat(r.querySelector(".t-end").value) || 0, text: text });
+                  end: parseFloat(r.querySelector(".t-end").value) || 0,
+                  text: text, rate: r.querySelector(".t-rate").value });
     });
     if (!segs.length) { msg.textContent = "Cần ít nhất 1 đoạn."; msg.className = "form-msg err"; return; }
     btn.disabled = true; msg.textContent = "Đang tạo job render…"; msg.className = "form-msg";

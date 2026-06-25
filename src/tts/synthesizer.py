@@ -34,16 +34,18 @@ class Synthesizer:
         self.rate = rate
         self.work_dir = work_dir or Path(".")
 
-    async def _tts_one(self, text: str, out: Path, retries: int = 3) -> bool:
+    async def _tts_one(self, text: str, out: Path, retries: int = 3,
+                       rate: str | None = None) -> bool:
         """Tạo TTS cho 1 đoạn, có retry. Trả True nếu thành công.
 
         edge-tts đôi khi trả 'NoAudioReceived' (chập chờn / giới hạn máy chủ MS,
         hoặc giọng không đọc được text) -> thử lại, vẫn lỗi thì bỏ qua đoạn này
         (coi như im lặng) để KHÔNG làm hỏng cả job."""
         delay = 1.5
+        use_rate = rate or self.rate
         for attempt in range(retries):
             try:
-                communicate = edge_tts.Communicate(text, self.voice, rate=self.rate)
+                communicate = edge_tts.Communicate(text, self.voice, rate=use_rate)
                 await communicate.save(str(out))
                 if out.exists() and out.stat().st_size > 0:
                     return True
@@ -92,7 +94,8 @@ class Synthesizer:
             for i, seg in enumerate(segments):
                 if not seg.text.strip():
                     continue
-                await self._tts_one(seg.text, seg_dir / f"raw_{i:04d}.mp3")
+                await self._tts_one(seg.text, seg_dir / f"raw_{i:04d}.mp3",
+                                    rate=getattr(seg, "rate", None))
             # (lỗi từng đoạn đã được nuốt trong _tts_one -> không raise ở đây)
 
         log.info("Tạo giọng đọc cho %d segment", len(segments))

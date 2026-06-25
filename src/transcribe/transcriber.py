@@ -31,6 +31,7 @@ class Segment:
     start: float   # giây
     end: float
     text: str
+    rate: str | None = None   # tốc độ đọc riêng câu này (vd "+20%"); None = dùng mặc định
 
 
 class BaseTranscriber:
