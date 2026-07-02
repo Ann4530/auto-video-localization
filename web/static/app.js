@@ -42,6 +42,65 @@ function lsTheme(t) {
   if (!form) return;
 
   var currentSrc = "file";
+  var currentMode = "translate";
+  var currentCSource = "film";   // film | voice_ai (chỉ dùng trong mode create)
+
+  var modeBtns = document.querySelectorAll(".mode-btn");
+  var urlSeg = document.querySelector('.seg-btn[data-src="url"]');
+  var sourceSection = document.getElementById("source-section");
+  var pageTitle = document.getElementById("page-title");
+  var pageSub = document.getElementById("page-sub");
+  var submitLabel = document.getElementById("submit-label");
+
+  // Khối upload video chỉ hiện khi: dịch, HOẶC tạo video kiểu "tự quay".
+  function updateSourceVisibility() {
+    var needUpload = currentMode === "translate" ||
+      (currentMode === "create" && currentCSource === "film");
+    if (sourceSection) sourceSection.classList.toggle("hidden", !needUpload);
+  }
+
+  // ---- Toggle chế độ: Dịch video / Tạo video ----
+  function applyMode(m) {
+    currentMode = m;
+    modeBtns.forEach(function (b) { b.classList.toggle("active", b.dataset.mode === m); });
+    document.querySelectorAll("[data-mode-block]").forEach(function (el) {
+      el.classList.toggle("hidden", el.dataset.modeBlock !== m);
+    });
+    var create = m === "create";
+    if (urlSeg) urlSeg.classList.toggle("hidden", create);   // tạo video không dán link
+    if (create && currentSrc === "url") document.querySelector('.seg-btn[data-src="file"]').click();
+    updateSourceVisibility();
+    if (pageTitle) pageTitle.textContent = create ? "Tạo video" : "Dịch & lồng tiếng video";
+    if (pageSub) pageSub.textContent = create
+      ? "Tự quay (caption giọng thật) hoặc để AI lồng tiếng từ kịch bản — phụ đề karaoke động tự động."
+      : "Tải lên file hoặc dán link video ngắn từ TikTok, Douyin, Instagram. Chọn dịch phụ đề, lồng tiếng, hay cả hai.";
+    syncSubmitLabel();
+  }
+  function syncSubmitLabel() {
+    if (!submitLabel) return;
+    submitLabel.textContent = currentMode !== "create" ? "Bắt đầu dịch"
+      : (currentCSource === "voice_ai" ? "Tạo video (AI lồng tiếng)" : "Tạo video");
+  }
+  modeBtns.forEach(function (b) {
+    b.addEventListener("click", function () { applyMode(b.dataset.mode); });
+  });
+
+  // ---- Sub-toggle nguồn lời nói (trong mode create) ----
+  document.querySelectorAll("#csource-seg .seg-btn").forEach(function (b) {
+    b.addEventListener("click", function () {
+      currentCSource = b.dataset.csource;
+      document.querySelectorAll("#csource-seg .seg-btn").forEach(function (x) {
+        x.classList.toggle("active", x === b);
+      });
+      document.querySelectorAll("[data-csource-block]").forEach(function (el) {
+        el.classList.toggle("hidden", el.dataset.csourceBlock !== currentCSource);
+      });
+      updateSourceVisibility();
+      syncSubmitLabel();
+    });
+  });
+
+  applyMode(form.getAttribute("data-init-mode") || "translate");
 
   // ---- Segment file/url ----
   document.querySelectorAll(".seg-btn").forEach(function (btn) {
@@ -136,8 +195,46 @@ function lsTheme(t) {
     btn.disabled = true;
     setMsg("Đang gửi…", "");
 
-    var choice = form.querySelector('input[name=choice]:checked').value;
     var projSel = document.getElementById("project_id");
+
+    // ===== Chế độ TẠO VIDEO =====
+    if (currentMode === "create") {
+      // --- B. AI lồng tiếng từ kịch bản ---
+      if (currentCSource === "voice_ai") {
+        var script = (document.getElementById("create-script") || {}).value || "";
+        if (!script.trim()) { setMsg("Hãy nhập kịch bản.", "err"); btn.disabled = false; return; }
+        fetch("/api/jobs/create-voice", {
+          method: "POST",
+          headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
+          body: JSON.stringify({
+            script: script,
+            voice: (document.getElementById("create-voice") || {}).value || "vi-VN-HoaiMyNeural",
+            terms: (document.getElementById("create-terms") || {}).value || "",
+            project_id: projSel ? projSel.value : ""
+          })
+        })
+          .then(function (r) { if (!r.ok) return r.text().then(function (t) { throw new Error(t || r.status); }); return r.json(); })
+          .then(function (d) { setMsg("Đã tạo job, đang chuyển…", "ok"); window.location.href = "/jobs/" + d.id; })
+          .catch(function (err) { setMsg("Lỗi: " + err.message, "err"); btn.disabled = false; });
+        return;
+      }
+      // --- A. Tự quay (caption giọng thật) ---
+      if (!fileInput.files.length) { setMsg("Hãy chọn video bạn tự quay.", "err"); btn.disabled = false; return; }
+      var cfd = new FormData();
+      cfd.append("file", fileInput.files[0]);
+      cfd.append("terms", (document.getElementById("create-terms") || {}).value || "");
+      cfd.append("lang", (document.getElementById("create-lang") || {}).value || "vi");
+      cfd.append("model", (document.getElementById("create-model") || {}).value || "base");
+      cfd.append("project_id", projSel ? projSel.value : "");
+      fetch("/api/jobs/create", { method: "POST", headers: authHeaders(), body: cfd })
+        .then(function (r) { if (!r.ok) return r.text().then(function (t) { throw new Error(t || r.status); }); return r.json(); })
+        .then(function (d) { setMsg("Đã tạo job, đang chuyển…", "ok"); window.location.href = "/jobs/" + d.id; })
+        .catch(function (err) { setMsg("Lỗi: " + err.message, "err"); btn.disabled = false; });
+      return;
+    }
+
+    // ===== Chế độ DỊCH (đường cũ) =====
+    var choice = form.querySelector('input[name=choice]:checked').value;
     var common = {
       choice: choice,
       ocr_overlay: document.getElementById("ocr_overlay").checked,

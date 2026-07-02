@@ -34,6 +34,42 @@ def _noop(stage: str, percent: int) -> None:  # callback mặc định
     pass
 
 
+# Nhãn cấu trúc kịch bản (không phải lời thoại) -> bỏ hoặc cắt phần nhãn.
+_SCRIPT_LABEL = re.compile(
+    r"^\s*(title|narration|on[-\s]?screen text|on[-\s]?screen|script|scene|hook|"
+    r"cta|visual|visuals|sound|music|sfx|note|notes|caption|captions|"
+    r"b[-\s]?roll|voiceover|vo|text)\s*\d*\s*[:\-–]\s*",
+    re.IGNORECASE,
+)
+
+
+def _clean_script_lines(script: str) -> list[str]:
+    """Tách kịch bản thành các câu ĐỌC ĐƯỢC, bỏ rác cấu trúc.
+
+    Bỏ: dòng phân cách (--- *** ===), dòng chỉ có ký hiệu/không có chữ, dòng nhãn
+    (TITLE:/Narration:/On-screen text:...). Với dòng 'Nhãn: nội dung' thì cắt nhãn,
+    giữ nội dung. Sau đó tách tiếp theo câu để phụ đề ngắn gọn.
+    """
+    out: list[str] = []
+    for raw in script.splitlines():
+        s = raw.strip().lstrip("•·-*#> ").strip()
+        if not s:
+            continue
+        # dòng phân cách / chỉ ký hiệu
+        if re.fullmatch(r"[-=_*~#•·.\s]+", s):
+            continue
+        # cắt nhãn đầu dòng nếu có (giữ nội dung phía sau)
+        s = _SCRIPT_LABEL.sub("", s).strip()
+        if not s or not re.search(r"[A-Za-zÀ-ỹ0-9]", s):
+            continue
+        # tách theo câu để mỗi phụ đề gọn
+        for sent in re.split(r"(?<=[.!?…])\s+", s):
+            sent = sent.strip()
+            if sent and re.search(r"[A-Za-zÀ-ỹ0-9]", sent):
+                out.append(sent)
+    return out
+
+
 class Pipeline:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -140,7 +176,27 @@ class Pipeline:
             return self.state.get(item.id).get("output")  # type: ignore
         return self._run(item, opts, progress)
 
+    def process_script(
+        self,
+        script: str,
+        opts: JobOptions,
+        title: str | None = None,
+        progress: ProgressCb | None = None,
+        skip_state: bool = True,
+    ) -> Path | None:
+        """Mode LỒNG TIẾNG AI: từ KỊCH BẢN (không có video nguồn).
+
+        Sinh giọng edge-tts -> suy timing -> caption karaoke -> nền AI/màu.
+        Không cần whisper nên KHÔNG tốn RAM.
+        """
+        progress = progress or _noop
+        item_id = "voice_" + hashlib.md5(script.encode("utf-8")).hexdigest()[:10]
+        return self._create_from_script(item_id, title or "Video lồng tiếng",
+                                        script, opts, progress)
+
     def _run(self, item: VideoItem, opts: JobOptions, progress: ProgressCb) -> Path:
+        if opts.mode == "create":
+            return self._create_video(item, opts, progress)
         cfg = self.cfg
         work = cfg.work_dir / item.id
         work.mkdir(parents=True, exist_ok=True)
@@ -230,6 +286,159 @@ class Pipeline:
         progress("done", 100)
         log.info("HOÀN TẤT: %s -> %s", item.title, out_path.name)
         return out_path
+
+    def _create_video(self, item: VideoItem, opts: JobOptions,
+                      progress: ProgressCb) -> Path:
+        """Pipeline TẠO video: footage tự quay -> phụ đề KARAOKE ĐỘNG.
+
+        Không dịch, không lồng tiếng: bóc lời mức TỪ bằng whisper (bắt buộc, vì
+        Gemini ASR không cấp word-timestamp) rồi sinh .ass karaoke và burn vào.
+        """
+        from .compose.captions import write_karaoke_ass
+        from .transcribe.transcriber import WhisperTranscriber
+
+        cfg = self.cfg
+        work = cfg.work_dir / item.id
+        work.mkdir(parents=True, exist_ok=True)
+        out_dir = Path(opts.output_dir) if opts.output_dir else cfg.output_dir
+        out_dir.mkdir(parents=True, exist_ok=True)
+        log.info("Job TẠO video: lang=%s, model=%s, terms=%s",
+                 opts.create_lang, opts.create_model, opts.create_terms)
+
+        progress("transcribe", 15)
+        segments, lang = self._transcribe_words(
+            item.path, opts.create_model or "tiny", opts.create_lang or "vi"
+        )
+        if not segments:
+            raise RuntimeError("Không bóc được lời thoại nào từ footage")
+        self._save_segments(item, segments, out_dir)
+
+        progress("captions", 60)
+        compositor = Compositor(cfg.compose)
+        vw, vh = compositor.video_size(item.path)
+        terms = {w for w in (opts.create_terms or []) if w}
+        ass = write_karaoke_ass(
+            segments, work / "captions.ass",
+            video_w=vw, video_h=vh, terms=terms or None,
+        )
+
+        progress("compose", 85)
+        out_path = out_dir / f"{item.id}_caption.mp4"
+        compositor.compose(video=item.path, vi_voice=None, srt=None, ass=ass,
+                           out_path=out_path, overlays=[])
+
+        self.state.mark(item.id, {
+            "title": item.title, "url": item.url, "mode": "create",
+            "source_lang": lang, "output": str(out_path), "uploaded": {},
+        })
+        progress("done", 100)
+        log.info("HOÀN TẤT (tạo): %s -> %s", item.title, out_path.name)
+        return out_path
+
+    def _create_from_script(self, item_id: str, title: str, script: str,
+                            opts: JobOptions, progress: ProgressCb) -> Path:
+        """Lồng tiếng AI: kịch bản -> giọng + caption karaoke trên nền."""
+        import json
+        import re
+
+        from .compose.captions import write_karaoke_ass
+
+        cfg = self.cfg
+        work = cfg.work_dir / item_id
+        work.mkdir(parents=True, exist_ok=True)
+        out_dir = Path(opts.output_dir) if opts.output_dir else cfg.output_dir
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        # Tách + LÀM SẠCH kịch bản: bỏ dòng phân cách (---), nhãn cấu trúc
+        # (TITLE:/Narration:/On-screen text:...) và dòng không có chữ -> edge-tts
+        # không đọc được những dòng này, mỗi dòng rác làm chậm ~24s vì retry.
+        lines = _clean_script_lines(script)
+        if not lines:
+            raise RuntimeError("Kịch bản không có câu thoại nào đọc được")
+        log.info("Job LỒNG TIẾNG AI: %d dòng đọc được, voice=%s", len(lines), opts.voice)
+
+        progress("tts", 25)
+        synth = Synthesizer(
+            voice=opts.voice or cfg.tts.get("voice", "vi-VN-HoaiMyNeural"),
+            rate=opts.rate or cfg.tts.get("rate", "+0%"),
+            work_dir=work,
+        )
+        # Báo tiến trình mịn trong lúc đọc (25% -> 60%) để không trông như đứng hình.
+        def _tts_prog(done: int, n: int) -> None:
+            progress("tts", 25 + int(35 * done / max(n, 1)))
+
+        voice_audio, segments, total = synth.synthesize_sequential(
+            lines, on_progress=_tts_prog
+        )
+        if not segments:
+            raise RuntimeError("Không tạo được giọng đọc (edge-tts lỗi mạng?)")
+
+        # Lưu segments (để sửa/render lại sau nếu cần).
+        (out_dir / f"{item_id}_vi.segments.json").write_text(
+            json.dumps([{"start": s.start, "end": s.end, "text": s.text}
+                        for s in segments], ensure_ascii=False, indent=1),
+            encoding="utf-8",
+        )
+
+        progress("captions", 65)
+        W, H = 720, 1280   # khung dọc HD nhẹ RAM (1080p hay 'malloc failed' máy yếu)
+        terms = {w for w in (opts.create_terms or []) if w}
+        ass = write_karaoke_ass(segments, work / "captions.ass",
+                                video_w=W, video_h=H, terms=terms or None)
+
+        progress("compose", 85)
+        import gc
+        gc.collect()   # nhường RAM cho x264 (máy yếu)
+        compositor = Compositor(cfg.compose)
+        out_path = out_dir / f"{item_id}_voice.mp4"
+        compositor.compose_voiceover(voice_audio, ass, out_path,
+                                     width=W, height=H, duration=total)
+
+        self.state.mark(item_id, {
+            "title": title, "url": "", "mode": "create_voice",
+            "output": str(out_path), "uploaded": {},
+        })
+        progress("done", 100)
+        log.info("HOÀN TẤT (lồng tiếng AI): %s -> %s", title, out_path.name)
+        return out_path
+
+    def _transcribe_words(self, media: Path, model: str, language: str):
+        """Bóc lời MỨC TỪ bằng whisper, có fallback cho máy RAM yếu.
+
+        word_timestamps ngốn RAM gấp ~2x. Nếu hết RAM (mkl_malloc / alloc),
+        tự lùi dần model -> 'tiny' với 1 luồng + greedy để chạy được.
+        """
+        from .transcribe.transcriber import WhisperTranscriber
+
+        t = self.cfg.transcribe
+        # Bậc thử: model người dùng chọn -> tiny (nhẹ nhất). Loại trùng, giữ thứ tự.
+        chain = list(dict.fromkeys([model, "tiny"]))
+        last_err: Exception | None = None
+        for i, m in enumerate(chain):
+            try:
+                tr = WhisperTranscriber(
+                    model=m,
+                    language=language,
+                    device=t.get("device", "auto"),
+                    compute_type=t.get("compute_type", "int8"),
+                    cpu_threads=2 if i == 0 else 1,
+                    word_timestamps=True,
+                    beam_size=1,            # greedy -> ít RAM
+                )
+                segments, lang = tr.transcribe(media)
+                if i > 0:
+                    log.warning("Đã lùi model whisper xuống '%s' do thiếu RAM", m)
+                return segments, lang
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+                msg = str(e).lower()
+                if "malloc" in msg or "alloc" in msg or "memory" in msg:
+                    log.warning("Whisper '%s' thiếu RAM (%s), thử model nhẹ hơn", m, e)
+                    import gc
+                    gc.collect()
+                    continue
+                raise
+        raise RuntimeError(f"Bóc lời thất bại (hết RAM kể cả tiny): {last_err}")
 
     def compositor_duration(self, video: Path) -> float:
         """Lấy thời lượng video (Compositor nhẹ, dựng tạm)."""

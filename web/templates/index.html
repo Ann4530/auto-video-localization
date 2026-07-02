@@ -4,13 +4,24 @@
 
 {% block content %}
 <header class="page-head">
-  <h1>Dịch &amp; lồng tiếng video</h1>
-  <p>Tải lên file hoặc dán link video ngắn từ TikTok, Douyin, Instagram. Chọn dịch phụ đề, lồng tiếng, hay cả hai.</p>
+  <h1 id="page-title">Dịch &amp; lồng tiếng video</h1>
+  <p id="page-sub">Tải lên file hoặc dán link video ngắn từ TikTok, Douyin, Instagram. Chọn dịch phụ đề, lồng tiếng, hay cả hai.</p>
 </header>
 
-<form id="job-form" class="card form" autocomplete="off">
+<form id="job-form" class="card form" autocomplete="off" data-init-mode="{{ sel_mode or 'translate' }}">
+  <!-- Chế độ: Dịch video / Tạo video -->
+  <div class="mode-switch">
+    <button type="button" class="mode-btn active" data-mode="translate">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8h7M9 5v3M7 8c0 4-2 6-4 7M11 14c-1.6-.9-3-2.3-4-4"/><path d="M13.5 19l4-9 4 9M14.8 16h5.4"/></svg>
+      <span><b>Dịch video</b><small>Phụ đề / lồng tiếng từ video có sẵn</small></span>
+    </button>
+    <button type="button" class="mode-btn" data-mode="create">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15 8h.01M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="m3 16 5-5c.9-.9 2.1-.9 3 0l5 5M14 14l1-1c.9-.9 2.1-.9 3 0l3 3"/></svg>
+      <span><b>Tạo video</b><small>Caption động cho video bạn tự quay</small></span>
+    </button>
+  </div>
   <!-- Nguồn -->
-  <div>
+  <div id="source-section">
     <div class="seg">
       <button type="button" class="seg-btn active" data-src="file">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 13v8M8 17l4-4 4 4M20 16.5A4.5 4.5 0 0 0 17.5 8h-1.3A7 7 0 1 0 4 14.9"/></svg>
@@ -42,6 +53,7 @@
     </div>
   </div>
 
+  <div data-mode-block="translate">
   <!-- Chế độ -->
   <div>
     <div class="field-label">Bạn muốn dịch gì?</div>
@@ -150,6 +162,88 @@
     </div>
   </div>
 
+  </div><!-- /khối Dịch video -->
+
+  <!-- Tạo video: tuỳ chọn -->
+  <div data-mode-block="create" class="hidden">
+    <!-- Nguồn lời nói -->
+    <div class="field-label">Nguồn lời nói</div>
+    <div class="seg" id="csource-seg" style="margin-bottom:16px">
+      <button type="button" class="seg-btn active" data-csource="film">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M23 7l-7 5 7 5zM1 5h15v14H1z"/></svg>
+        Tự quay (caption giọng thật)
+      </button>
+      <button type="button" class="seg-btn" data-csource="voice_ai">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6M21 19a2 2 0 0 1-2 2h-1v-6h3zM3 19a2 2 0 0 0 2 2h1v-6H3z"/></svg>
+        AI lồng tiếng từ kịch bản
+      </button>
+    </div>
+
+    <!-- Chung: thuật ngữ tô nổi bật -->
+    <div class="field">
+      <label class="field-label">Thuật ngữ tiếng Anh cần tô nổi bật</label>
+      <input type="text" id="create-terms" placeholder="diagnosis, symptom, prognosis">
+      <small class="muted">Cách nhau bằng dấu phẩy. Các từ này đổi màu (cyan) trong phụ đề để người học bắt ngay. Để trống cũng được.</small>
+    </div>
+
+    <!-- A. Tự quay -->
+    <div data-csource-block="film">
+      <div class="row">
+        <div class="field">
+          <label class="field-label">Ngôn ngữ bạn đọc</label>
+          <div class="select-wrap">
+            <span class="lead"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8h7M9 5v3M7 8c0 4-2 6-4 7M11 14c-1.6-.9-3-2.3-4-4"/><path d="M13.5 19l4-9 4 9"/></svg></span>
+            <select id="create-lang">
+              <option value="vi" selected>Tiếng Việt (chèn term Anh)</option>
+              <option value="en">Tiếng Anh</option>
+            </select>
+            <span class="chev"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span>
+          </div>
+        </div>
+        <div class="field">
+          <label class="field-label">Độ chính xác (model)</label>
+          <div class="select-wrap">
+            <span class="lead"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg></span>
+            <select id="create-model">
+              <option value="tiny" selected>Tiny — nhẹ RAM nhất (khuyên dùng máy yếu)</option>
+              <option value="base">Base — chính xác hơn, tốn RAM hơn</option>
+              <option value="small">Small — nét nhất phần tiếng Anh, nặng</option>
+            </select>
+            <span class="chev"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span>
+          </div>
+        </div>
+      </div>
+      <div class="url-hint">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg>
+        <span>Tải lên <b>video bạn tự quay</b> (mặt thật, dọc 9:16). Hệ thống bóc lời mức từ và gắn phụ đề karaoke động.</span>
+      </div>
+    </div>
+
+    <!-- B. AI lồng tiếng -->
+    <div data-csource-block="voice_ai" class="hidden">
+      <div class="field">
+        <label class="field-label">Kịch bản (mỗi câu một dòng)</label>
+        <textarea id="create-script" rows="6" placeholder="Hôm nay học từ diagnosis.&#10;Diagnosis nghĩa là chẩn đoán.&#10;Ví dụ: The doctor made a diagnosis."></textarea>
+        <small class="muted">AI sẽ đọc kịch bản bằng giọng dưới đây và tự gắn phụ đề karaoke. Không cần quay, không cần whisper.</small>
+      </div>
+      <div class="field" style="max-width:360px">
+        <label class="field-label">Giọng đọc</label>
+        <div class="select-wrap">
+          <span class="lead"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3"/></svg></span>
+          <select id="create-voice">
+            <option value="vi-VN-HoaiMyNeural" selected>vi-VN-HoaiMy (nữ)</option>
+            <option value="vi-VN-NamMinhNeural">vi-VN-NamMinh (nam)</option>
+          </select>
+          <span class="chev"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span>
+        </div>
+      </div>
+      <div class="url-hint">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg>
+        <span>Bản đầu dựng trên <b>nền màu đơn giản</b>. Nền AI sinh ảnh + zoom sẽ thêm ở bước sau.</span>
+      </div>
+    </div>
+  </div>
+
   <!-- Dự án -->
   <div class="field" style="max-width:360px">
     <label class="field-label">Lưu vào dự án</label>
@@ -168,7 +262,7 @@
   <div class="form-foot">
     <button type="submit" class="btn btn-primary" id="submit-btn">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-      Bắt đầu dịch
+      <span id="submit-label">Bắt đầu dịch</span>
     </button>
     <span class="form-msg" id="form-msg">Thời gian xử lý ~2–4 phút mỗi video.</span>
   </div>

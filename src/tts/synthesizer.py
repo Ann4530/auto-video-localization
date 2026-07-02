@@ -113,6 +113,50 @@ class Synthesizer:
 
         return self._build_timeline(placed, total_duration, seg_dir)
 
+    def synthesize_sequential(
+        self, texts: list[str], gap: float = 0.3,
+        on_progress=None, retries: int = 2,
+    ) -> tuple[Path, list[Segment], float]:
+        """TTS từng dòng NỐI TIẾP nhau, tự suy ra timing (cho mode lồng tiếng AI).
+
+        Không cần biết thời lượng trước: đọc từng dòng, đo độ dài thực, đặt
+        liên tiếp (cách nhau `gap` giây). Trả (audio_path, segments, total).
+
+        on_progress(done, total): gọi sau mỗi dòng để báo tiến trình.
+        """
+        seg_dir = self.work_dir / "tts_seq"
+        seg_dir.mkdir(parents=True, exist_ok=True)
+        total_lines = len(texts)
+
+        async def gen() -> list[tuple[str, Path]]:
+            ok: list[tuple[str, Path]] = []
+            for i, t in enumerate(texts):
+                t = t.strip()
+                if t:
+                    p = seg_dir / f"line_{i:04d}.mp3"
+                    if await self._tts_one(t, p, retries=retries):
+                        ok.append((t, p))
+                if on_progress:
+                    on_progress(i + 1, total_lines)
+            return ok
+
+        log.info("Lồng tiếng AI cho %d dòng kịch bản", total_lines)
+        lines = asyncio.run(gen())
+
+        segments: list[Segment] = []
+        placed: list[tuple[float, Path]] = []
+        cursor = 0.0
+        for t, p in lines:
+            d = self._duration(p)
+            if d <= 0:
+                continue
+            segments.append(Segment(start=cursor, end=cursor + d, text=t))
+            placed.append((cursor, p))
+            cursor += d + gap
+        total = max(cursor - gap, 0.0) + 0.3
+        audio = self._build_timeline(placed, total, seg_dir)
+        return audio, segments, total
+
     def _build_timeline(
         self, placed: list[tuple[float, Path]], total: float, seg_dir: Path
     ) -> Path:

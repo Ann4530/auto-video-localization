@@ -12,10 +12,16 @@
     <h1 style="margin:0 0 7px;font-size:24px;font-weight:700;letter-spacing:-.4px">{{ project.name }}</h1>
     <p class="muted" style="margin:0;font-size:13px">{{ jobs|length }} video · dự án <code>{{ project.id[:8] }}</code></p>
   </div>
-  <a class="btn btn-primary btn-sm" href="/?project={{ project.id }}">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
-    Thêm video dịch
-  </a>
+  <div style="display:flex;gap:8px">
+    <a class="btn btn-sm" href="/?project={{ project.id }}&mode=create">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 8h.01M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="m3 16 5-5c.9-.9 2.1-.9 3 0l5 5"/></svg>
+      Tạo video
+    </a>
+    <a class="btn btn-primary btn-sm" href="/?project={{ project.id }}">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+      Thêm video dịch
+    </a>
+  </div>
 </header>
 
 <div class="proj-layout" data-pid="{{ project.id }}">
@@ -23,7 +29,7 @@
   <div>
     <div class="jobs-card">
       {% if not jobs %}
-        <div class="empty"><div class="empty-ico">🎬</div><p>Chưa có video. Bấm <b>Thêm video dịch</b>.</p></div>
+        <div class="empty"><div class="empty-ico">🎬</div><p>Chưa có video. Bấm <b>Tạo video</b> (tự quay) hoặc <b>Thêm video dịch</b>.</p></div>
       {% else %}
       <div class="jt-row jt-head"><span>Video</span><span>Trạng thái</span><span class="jt-prog">Tiến trình</span><span class="jt-act"></span></div>
       {% for j in jobs %}

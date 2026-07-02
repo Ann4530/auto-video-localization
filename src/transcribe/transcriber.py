@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import subprocess
 import tempfile
 import time
@@ -23,7 +24,21 @@ import requests
 
 from ..utils.logging import get_logger
 
+# Giới hạn số luồng MKL/OMP TRƯỚC khi ctranslate2 nạp -> tránh "mkl_malloc failed"
+# trên máy RAM yếu (một khối cấp phát lớn theo số luồng). setdefault để không
+# đè biến môi trường người dùng đã đặt.
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+os.environ.setdefault("MKL_NUM_THREADS", "2")
+
 log = get_logger("transcribe")
+
+
+@dataclass
+class Word:
+    """Mốc thời gian MỨC TỪ (cho phụ đề karaoke). Chỉ whisper cấp được."""
+    start: float
+    end: float
+    text: str
 
 
 @dataclass
@@ -32,6 +47,7 @@ class Segment:
     end: float
     text: str
     rate: str | None = None   # tốc độ đọc riêng câu này (vd "+20%"); None = dùng mặc định
+    words: list[Word] | None = None   # mốc từng từ; None nếu backend không cấp
 
 
 class BaseTranscriber:
@@ -51,10 +67,17 @@ class WhisperTranscriber(BaseTranscriber):
         device: str = "auto",
         compute_type: str = "int8",
         cpu_threads: int = 4,
+        word_timestamps: bool = False,
+        beam_size: int = 5,
     ):
         from faster_whisper import WhisperModel
 
         self.language = language
+        # Bật khi cần phụ đề karaoke (mức từ). Tốn thêm chút thời gian/RAM nên
+        # mặc định TẮT để pipeline dịch không bị ảnh hưởng.
+        self.word_timestamps = word_timestamps
+        # beam_size nhỏ (1) -> ít RAM hơn (greedy). Mặc định 5 cho độ chính xác.
+        self.beam_size = beam_size
         log.info("Nạp model whisper '%s' (device=%s)", model, device)
         # Giới hạn luồng để tránh MKL xin quá nhiều RAM (mkl_malloc failed)
         self._model = WhisperModel(
@@ -72,13 +95,23 @@ class WhisperTranscriber(BaseTranscriber):
             str(media_path),
             language=language or self.language or None,
             vad_filter=True,             # lọc khoảng lặng -> timestamp gọn hơn
-            beam_size=5,
+            beam_size=self.beam_size,
+            word_timestamps=self.word_timestamps,
         )
-        segments = [
-            Segment(start=s.start, end=s.end, text=s.text.strip())
-            for s in segments_iter
-            if s.text.strip()
-        ]
+        segments = []
+        for s in segments_iter:
+            if not s.text.strip():
+                continue
+            words = None
+            if self.word_timestamps and getattr(s, "words", None):
+                words = [
+                    Word(start=w.start, end=w.end, text=w.word.strip())
+                    for w in s.words
+                    if w.word and w.word.strip()
+                ] or None
+            segments.append(
+                Segment(start=s.start, end=s.end, text=s.text.strip(), words=words)
+            )
         log.info("Phát hiện ngôn ngữ: %s | %d segment", info.language, len(segments))
         return segments, info.language
 

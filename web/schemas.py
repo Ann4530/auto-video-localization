@@ -51,6 +51,16 @@ class ChannelScanIn(JobOptionsIn):
     limit: int = 5
 
 
+class VoiceJobIn(BaseModel):
+    """Tạo video bằng lồng tiếng AI từ kịch bản (mode create, source voice_ai)."""
+    script: str
+    voice: str = "vi-VN-HoaiMyNeural"
+    rate: str = "+0%"
+    terms: str = ""                 # thuật ngữ Anh tô nổi bật, cách nhau dấu phẩy
+    title: str | None = None
+    project_id: str | None = None
+
+
 class UploadIn(BaseModel):
     targets: list[str] = Field(default_factory=lambda: ["tiktok"])
     caption: str | None = None

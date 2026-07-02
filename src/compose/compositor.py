@@ -25,6 +25,89 @@ class Compositor:
         except ValueError:
             return 0.0
 
+    def video_size(self, video: Path) -> tuple[int, int]:
+        """Lấy (width, height) của video. Mặc định 1080x1920 nếu probe lỗi."""
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x",
+             str(video)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        try:
+            w, h = r.stdout.strip().split("x")[:2]
+            return int(w), int(h)
+        except (ValueError, IndexError):
+            return 1080, 1920
+
+    def compose_voiceover(
+        self,
+        voice: Path,
+        ass: Path,
+        out_path: Path,
+        *,
+        width: int = 720,
+        height: int = 1280,
+        duration: float,
+        bg: str = "0f1220",
+        bg_image: Path | None = None,
+    ) -> Path:
+        """Dựng video cho mode LỒNG TIẾNG AI: nền (màu/ảnh) + giọng + caption ASS.
+
+        Không có video gốc -> tạo nền bằng lavfi (màu) hoặc ảnh tĩnh lặp. Audio
+        chỉ là giọng AI. Burn phụ đề karaoke .ass.
+
+        Máy RAM yếu: x264 ở khung dọc lớn dễ 'malloc failed'. Thử nhiều bậc nhẹ
+        dần (preset nhanh hơn + hạ độ phân giải) cho tới khi encode được.
+        """
+        ass_escaped = str(ass).replace("\\", "/").replace(":", "\\:")
+
+        def build(preset: str, w: int, h: int, threads: int) -> list[str]:
+            cmd = ["ffmpeg", "-y"]
+            if bg_image is not None:
+                cmd += ["-loop", "1", "-framerate", "25", "-t", f"{duration:.2f}",
+                        "-i", str(bg_image)]
+                vf = (f"scale={w}:{h}:force_original_aspect_ratio=increase,"
+                      f"crop={w}:{h},subtitles='{ass_escaped}'")
+            else:
+                cmd += ["-f", "lavfi", "-t", f"{duration:.2f}",
+                        "-i", f"color=c=0x{bg}:s={w}x{h}:r=25"]
+                vf = f"subtitles='{ass_escaped}'"
+            cmd += [
+                "-i", str(voice), "-vf", vf,
+                "-map", "0:v", "-map", "1:a",
+                "-c:v", "libx264", "-preset", preset, "-crf", "23",
+                "-pix_fmt", "yuv420p", "-threads", str(threads),
+                "-c:a", "aac", "-b:a", "160k", "-shortest", str(out_path),
+            ]
+            return cmd
+
+        # Bậc nhẹ dần: (preset, rộng, cao, luồng). 9:16 giữ nguyên tỉ lệ.
+        # Encode trên máy RAM thấp hay fail chập chờn (malloc, hoặc 'Conversion
+        # failed' lúc finalize) -> cứ gặp lỗi là thử bậc nhẹ hơn, không phân biệt.
+        import gc
+
+        tiers = [
+            ("ultrafast", width, height, 1),
+            ("ultrafast", 540, 960, 1),
+            ("ultrafast", 360, 640, 1),
+        ]
+        last_err = ""
+        for i, (preset, w, h, threads) in enumerate(tiers):
+            log.info("Render lồng tiếng AI (bậc %d: %s %dx%d) -> %s",
+                     i + 1, preset, w, h, out_path.name)
+            gc.collect()
+            proc = subprocess.run(build(preset, w, h, threads),
+                                  capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace")
+            if proc.returncode == 0:
+                if i > 0:
+                    log.warning("Đã hạ cấp encode xuống %s %dx%d", preset, w, h)
+                return out_path
+            last_err = (proc.stderr or "")[-1500:]
+            log.warning("Encode bậc %d fail, thử bậc nhẹ hơn", i + 1)
+        log.error("ffmpeg lỗi (mọi bậc):\n%s", last_err)
+        raise RuntimeError("Render lồng tiếng AI thất bại")
+
     def _subtitle_style(self) -> str:
         c = self.cfg
         return (
@@ -42,15 +125,18 @@ class Compositor:
         srt: Path | None,
         out_path: Path,
         overlays: list | None = None,
+        ass: Path | None = None,
     ) -> Path:
         """Tạo video cuối cùng.
 
         - vi_voice != None: trộn giọng Việt (to) + audio gốc (nhỏ, nền).
           vi_voice == None: GIỮ NGUYÊN audio gốc (chế độ chỉ đè chữ màn hình).
-        - srt != None & burn_subtitles: gắn cứng phụ đề.
-        - overlays: PNG khung trắng + chữ Việt đè lên chữ gốc theo thời gian.
+        - ass != None: burn phụ đề ĐỘNG karaoke (.ass, dùng style trong file).
+          Ưu tiên hơn srt; bỏ qua force_style vì ASS tự mang style.
+        - srt != None & burn_subtitles: gắn cứng phụ đề câu tĩnh.
+        - overlays: PNG (khung chữ / thẻ term) đè lên video theo thời gian.
         """
-        burn = bool(self.cfg.get("burn_subtitles", True)) and srt is not None
+        burn = bool(self.cfg.get("burn_subtitles", True)) and srt is not None and ass is None
         kov = self.keep_original_volume
         overlays = overlays or []
 
@@ -74,7 +160,11 @@ class Compositor:
 
         # --- Video: subtitles -> đè từng overlay ---
         cur = "[0:v]"
-        if burn:
+        if ass is not None:
+            ass_escaped = str(ass).replace("\\", "/").replace(":", "\\:")
+            filter_parts.append(f"{cur}subtitles='{ass_escaped}'[vbase]")
+            cur = "[vbase]"
+        elif burn:
             srt_escaped = str(srt).replace("\\", "/").replace(":", "\\:")
             filter_parts.append(
                 f"{cur}subtitles='{srt_escaped}':force_style='{self._subtitle_style()}'[vbase]"

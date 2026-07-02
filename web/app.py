@@ -27,7 +27,7 @@ from worker.db import STATE_DONE
 from .auth import COOKIE, AuthMiddleware, make_token
 from .deps import get_config, list_voices, queue, require_api_key
 from .schemas import (ChannelScanIn, JobCreated, JobStatus, ProjectIn,
-                      ProjectUpdate, RerenderIn, UploadIn, UrlJobIn)
+                      ProjectUpdate, RerenderIn, UploadIn, UrlJobIn, VoiceJobIn)
 
 HERE = Path(__file__).resolve().parent
 UPLOAD_DIR = ROOT / "data" / "uploads"
@@ -179,7 +179,8 @@ async def page_index(request: Request):
          "target_languages": TARGET_LANGUAGES,
          "source_languages": SOURCE_LANGUAGES,
          "projects": projects,
-         "sel_project": request.query_params.get("project", "")},
+         "sel_project": request.query_params.get("project", ""),
+         "sel_mode": request.query_params.get("mode", "translate")},
     )
 
 
@@ -239,6 +240,51 @@ async def api_job_upload(
     )
     job_id = queue().enqueue("file", str(dest), opts, title=Path(safe_name).stem,
                              project_id=pid)
+    return JobCreated(id=job_id)
+
+
+@app.post("/api/jobs/create", response_model=JobCreated, dependencies=[])
+async def api_job_create_video(
+    file: UploadFile = File(...),
+    terms: str = Form(""),
+    lang: str = Form("vi"),
+    model: str = Form("base"),
+    project_id: str | None = Form(None),
+):
+    """TẠO video: nhận footage tự quay -> gắn phụ đề karaoke động (mode=create)."""
+    pid = project_id or queue().ensure_default_project()
+    src_dir, out_dir = _project_dirs(pid)
+    safe_name = Path(file.filename or "video.mp4").name
+    dest = src_dir / f"{uuid.uuid4().hex}_{safe_name}"
+    with open(dest, "wb") as out:
+        shutil.copyfileobj(file.file, out)
+
+    term_list = [t.strip() for t in terms.split(",") if t.strip()]
+    opts = JobOptions.from_request(
+        "none", mode="create", create_terms=term_list,
+        create_lang=lang, create_model=model, output_dir=str(out_dir),
+    )
+    job_id = queue().enqueue("file", str(dest), opts,
+                             title=Path(safe_name).stem, project_id=pid)
+    return JobCreated(id=job_id)
+
+
+@app.post("/api/jobs/create-voice", response_model=JobCreated, dependencies=[])
+async def api_job_create_voice(data: VoiceJobIn):
+    """TẠO video bằng LỒNG TIẾNG AI từ kịch bản (mode=create, source=voice_ai)."""
+    script = (data.script or "").strip()
+    if not script:
+        raise HTTPException(400, "Cần nhập kịch bản")
+    pid = data.project_id or queue().ensure_default_project()
+    _, out_dir = _project_dirs(pid)
+    term_list = [t.strip() for t in (data.terms or "").split(",") if t.strip()]
+    opts = JobOptions.from_request(
+        "none", mode="create", create_source="voice_ai", create_script=script,
+        create_terms=term_list, voice=data.voice, rate=data.rate,
+        output_dir=str(out_dir),
+    )
+    title = (data.title or script[:40]).strip()
+    job_id = queue().enqueue("script", script, opts, title=title, project_id=pid)
     return JobCreated(id=job_id)
 
 

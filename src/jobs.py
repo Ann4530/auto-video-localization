@@ -23,11 +23,27 @@ CHOICES = ("text", "voice", "both", "none")
 
 @dataclass
 class JobOptions:
+    # --- Chế độ job ---
+    #   "translate" : dịch/lồng tiếng video có sẵn (mặc định, đường cũ)
+    #   "create"    : TẠO video — gắn phụ đề karaoke động cho footage tự quay
+    mode: str = "translate"
+
     # --- Làm gì ---
     dub: bool = False              # dịch TIẾNG (lồng tiếng edge-tts)
     subtitles: bool = False        # dịch TEXT lời thoại -> phụ đề
     ocr_overlay: bool = False      # dịch CHỮ trên màn hình (OCR đè)
     ocr_all_text: bool = False     # True = dịch MỌI chữ (kể cả Latin), False = chỉ CJK
+
+    # --- Tạo video (mode=create) ---
+    #   create_source: nguồn lời nói
+    #     "film"      : video tự quay -> caption giọng thật (cần whisper)
+    #     "voice_ai"  : kịch bản -> edge-tts đọc (KHÔNG cần whisper)
+    #     "voice_own" : user tự up audio (chưa làm)
+    create_source: str = "film"
+    create_script: str = ""        # kịch bản (dùng khi create_source=voice_ai)
+    create_terms: list[str] = field(default_factory=list)  # thuật ngữ Anh tô nổi bật
+    create_lang: str = "vi"        # ngôn ngữ bạn đọc trong footage
+    create_model: str = "tiny"     # model whisper (tiny/base/small) cho word-time; tiny nhẹ RAM
 
     # --- Render lại từ bản dịch đã sửa (bỏ qua bóc lời + dịch) ---
     segments_path: str | None = None  # đường dẫn JSON [{start,end,text}] đã chỉnh

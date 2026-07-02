@@ -280,3 +280,15 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   .jt-row .jt-prog,.jt-head .jt-prog,.jt-row .jt-act,.jt-head .jt-act{display:none}
   .render-panel{position:relative}
 }
+
+/* ---- Toggle chịđộ Dịch / Tạo video ---- */
+.mode-switch{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px}
+.mode-btn{display:flex;align-items:center;gap:12px;text-align:left;padding:14px 16px;cursor:pointer;
+  border:1.5px solid var(--line);border-radius:14px;background:var(--surface-2);color:var(--ink-2);transition:.15s}
+.mode-btn:hover{border-color:var(--accent);color:var(--ink)}
+.mode-btn.active{border-color:var(--accent);background:var(--accent-soft);color:var(--ink);box-shadow:var(--shadow)}
+.mode-btn svg{flex:none;color:var(--accent-ink)}
+.mode-btn span{display:flex;flex-direction:column;gap:2px;line-height:1.25}
+.mode-btn b{font-size:15px;font-weight:700}
+.mode-btn small{font-size:12px;color:var(--muted)}
+@media (max-width:560px){.mode-switch{grid-template-columns:1fr}}
